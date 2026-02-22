@@ -23,6 +23,33 @@ pub fn main() !void {
     runMessageLoop(allocator, &stdin.interface, &stdout.interface);
 }
 
+/// Extract the integer "id" field from a JSON-RPC message object.
+/// JSON-RPC clients assign an id to each request so they can match our response.
+/// Returns 0 if missing or not an integer.
+fn getRequestId(value: std.json.Value) i64 {
+    // We can only look up "id" if the value is a JSON object.
+    const obj = switch (value) {
+        .object => |o| o,
+        else => return 0,
+    };
+
+    const id = obj.get("id") orelse return 0;
+
+    return switch (id) {
+        .integer => |n| n,
+        else => 0,
+    };
+}
+
+/// Write a complete JSON-RPC response line to the writer and flush.
+/// `comptime fmt` means the format string must be known at compile time —
+/// this lets Zig validate the format specifiers against the args tuple.
+fn sendResponse(writer: *Writer, comptime fmt: []const u8, args: anytype) void {
+    writer.print(fmt, args) catch return;
+    writer.writeAll("\n") catch return; // MCP messages are newline-delimited
+    writer.flush() catch return; // flush so the client sees it immediately
+}
+
 /// Reads JSON-RPC messages from the reader one line at a time,
 /// parses them, and dispatches by method name.
 fn runMessageLoop(allocator: Allocator, reader: *Reader, writer: *Writer) void {
@@ -60,23 +87,10 @@ fn runMessageLoop(allocator: Allocator, reader: *Reader, writer: *Writer) void {
         if (method) |m| {
             std.debug.print("ms-mcp: method={s}\n", .{m});
 
-            // Respond to "initialize" with server info and capabilities.
             if (std.mem.eql(u8, m, "initialize")) {
-                // Extract the request id so the client can match our response.
-                const id = switch (parsed.value) {
-                    .object => |obj| obj.get("id"),
-                    else => null,
-                };
-                const id_str = if (id) |v| switch (v) {
-                    .integer => |n| n,
-                    else => @as(i64, 0),
-                } else 0;
-
-                writer.print(
+                sendResponse(writer,
                     \\{{"jsonrpc":"2.0","id":{d},"result":{{"protocolVersion":"2024-11-05","capabilities":{{"tools":{{}}}},"serverInfo":{{"name":"ms-mcp","version":"0.1.0"}}}}}}
-                , .{id_str}) catch return;
-                writer.writeAll("\n") catch return;
-                writer.flush() catch return;
+                , .{getRequestId(parsed.value)});
             }
         }
     }
