@@ -1,4 +1,5 @@
 const std = @import("std");
+const types = @import("types.zig");
 
 // Type aliases — keeps function signatures cleaner.
 const Allocator = std.mem.Allocator;
@@ -41,11 +42,11 @@ fn getRequestId(value: std.json.Value) i64 {
     };
 }
 
-/// Write a complete JSON-RPC response line to the writer and flush.
-/// `comptime fmt` means the format string must be known at compile time —
-/// this lets Zig validate the format specifiers against the args tuple.
-fn sendResponse(writer: *Writer, comptime fmt: []const u8, args: anytype) void {
-    writer.print(fmt, args) catch return;
+/// Serialize any Zig struct as JSON, write it to the writer, then flush.
+/// Uses std.json.Stringify to automatically convert structs to JSON —
+/// no manual format strings needed.
+fn sendJsonResponse(writer: *Writer, response: anytype) void {
+    std.json.Stringify.value(response, .{}, writer) catch return;
     writer.writeAll("\n") catch return; // MCP messages are newline-delimited
     writer.flush() catch return; // flush so the client sees it immediately
 }
@@ -88,15 +89,18 @@ fn runMessageLoop(allocator: Allocator, reader: *Reader, writer: *Writer) void {
             std.debug.print("ms-mcp: method={s}\n", .{m});
 
             if (std.mem.eql(u8, m, "initialize")) {
-                sendResponse(writer,
-                    \\{{"jsonrpc":"2.0","id":{d},"result":{{"protocolVersion":"2024-11-05","capabilities":{{"tools":{{}}}},"serverInfo":{{"name":"ms-mcp","version":"0.1.0"}}}}}}
-                , .{getRequestId(parsed.value)});
+                // Respond with server info and capabilities.
+                // All fields use defaults from the struct definitions in types.zig.
+                sendJsonResponse(writer, types.JsonRpcResponse(types.InitializeResult){
+                    .id = getRequestId(parsed.value),
+                    .result = .{},
+                });
             } else if (std.mem.eql(u8, m, "tools/list")) {
                 // Respond with the list of tools this server offers. Empty for now.
-                // `\\` = multiline string literal. `{{` = escaped brace. `{d}` = integer arg.
-                sendResponse(writer,
-                    \\{{"jsonrpc":"2.0","id":{d},"result":{{"tools":[]}}}}
-                , .{getRequestId(parsed.value)});
+                sendJsonResponse(writer, types.JsonRpcResponse(types.ToolsListResult){
+                    .id = getRequestId(parsed.value),
+                    .result = .{ .tools = &.{} },
+                });
             }
         }
     }
