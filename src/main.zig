@@ -99,7 +99,13 @@ fn runMessageLoop(allocator: Allocator, reader: *Reader, writer: *Writer) void {
                 // Respond with the list of tools this server offers. Empty for now.
                 sendJsonResponse(writer, types.JsonRpcResponse(types.ToolsListResult){
                     .id = getRequestId(parsed.value),
-                    .result = .{ .tools = &.{} },
+                    .result = .{ .tools = &.{
+                    .{
+                        .name = "login",
+                        .description = "Start Microsoft 365 login flow. Returns a device code to enter at the verification URL.",
+                        .inputSchema = .{},
+                    },
+                } },
                 });
             }
         }
