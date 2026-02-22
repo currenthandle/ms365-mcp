@@ -16,7 +16,18 @@ pub fn main() !void {
     // and a stack-allocated buffer for internal buffering.
     var read_buf: [4096]u8 = undefined;
     const io = std.Options.debug_io; // the default blocking I/O context
-    // We'll change this to `var` once we start calling reader methods.
-    const stdin = std.Io.File.stdin().reader(io, &read_buf);
-    _ = stdin; // suppress "unused variable" error for now
+    // `var` because reading mutates the reader's internal buffer position.
+    var stdin = std.Io.File.stdin().reader(io, &read_buf);
+
+    // Read one line from stdin (up to the '\n' delimiter, which is excluded).
+    // Returns a slice into the reader's internal buffer — no allocation needed.
+    // Returns error.EndOfStream if stdin is closed before a newline arrives.
+    // File.Reader wraps an Io.Reader — access it via .interface field.
+    // Io.Reader has the high-level methods like takeDelimiterExclusive.
+    const line = stdin.interface.takeDelimiterExclusive('\n') catch |err| {
+        std.debug.print("ms-mcp: read error: {}\n", .{err});
+        return;
+    };
+
+    std.debug.print("ms-mcp: got {d} bytes: {s}\n", .{ line.len, line });
 }
