@@ -5,7 +5,8 @@ pub fn main() !void {
     // GeneralPurposeAllocator (GPA) is the standard choice — in debug mode
     // it detects memory leaks and double-frees for us.
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit(); // runs when main() exits — checks for leaks
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator(); // we'll need this for JSON parsing
 
     // std.debug.print writes to stderr — safe because MCP only uses stdin/stdout.
     // It takes a comptime format string and an args tuple. .{} = empty args.
@@ -35,6 +36,27 @@ pub fn main() !void {
         // Skip empty lines (some clients send trailing newlines).
         if (line.len == 0) continue;
 
-        std.debug.print("ms-mcp: got {d} bytes: {s}\n", .{ line.len, line });
+        // Parse the line as dynamic JSON. Value can hold any JSON structure.
+        // parseFromSlice returns a Parsed wrapper; .deinit() frees all memory.
+        const parsed = std.json.parseFromSlice(
+            std.json.Value,
+            allocator,
+            line,
+            .{},
+        ) catch {
+            std.debug.print("ms-mcp: invalid JSON\n", .{});
+            continue;
+        };
+        defer parsed.deinit();
+
+        // JSON-RPC messages have a "method" field (e.g. "initialize", "tools/list").
+        const method = switch (parsed.value) {
+            .object => |obj| if (obj.get("method")) |v| switch (v) {
+                .string => |s| s,
+                else => "(non-string method)",
+            } else "(no method)",
+            else => "(not an object)",
+        };
+        std.debug.print("ms-mcp: method={s}\n", .{method});
     }
 }
