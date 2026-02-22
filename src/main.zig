@@ -91,6 +91,12 @@ fn runMessageLoop(allocator: Allocator, reader: *Reader, writer: *Writer) void {
                 sendResponse(writer,
                     \\{{"jsonrpc":"2.0","id":{d},"result":{{"protocolVersion":"2024-11-05","capabilities":{{"tools":{{}}}},"serverInfo":{{"name":"ms-mcp","version":"0.1.0"}}}}}}
                 , .{getRequestId(parsed.value)});
+            } else if (std.mem.eql(u8, m, "tools/list")) {
+                // Respond with the list of tools this server offers. Empty for now.
+                // `\\` = multiline string literal. `{{` = escaped brace. `{d}` = integer arg.
+                sendResponse(writer,
+                    \\{{"jsonrpc":"2.0","id":{d},"result":{{"tools":[]}}}}
+                , .{getRequestId(parsed.value)});
             }
         }
     }
