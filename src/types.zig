@@ -58,3 +58,16 @@ pub const InputSchema = struct {
     type: []const u8 = "object",
     properties: struct {} = .{}, // empty for now — tools with no required args
 };
+
+/// The result of a "tools/call" response.
+/// MCP tool results are a list of content blocks (text, images, etc).
+pub const ToolCallResult = struct {
+    content: []const TextContent,
+};
+
+/// A text content block returned by a tool.
+/// The "type" field tells the client how to render it.
+pub const TextContent = struct {
+    type: []const u8 = "text",
+    text: []const u8,
+};

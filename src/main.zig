@@ -42,6 +42,29 @@ fn getRequestId(value: std.json.Value) i64 {
     };
 }
 
+/// Extract the tool name from a "tools/call" request.
+/// In JSON-RPC, tool calls look like: {"params": {"name": "login", ...}}
+/// Returns null if missing or malformed.
+fn getToolName(value: std.json.Value) ?[]const u8 {
+    // Same pattern as getRequestId — unwrap one layer at a time.
+    const obj = switch (value) {
+        .object => |o| o,
+        else => return null,
+    };
+
+    // "params" contains the tool call details.
+    const params = switch (obj.get("params") orelse return null) {
+        .object => |o| o,
+        else => return null,
+    };
+
+    // "name" is which tool the client wants to invoke.
+    return switch (params.get("name") orelse return null) {
+        .string => |s| s,
+        else => null,
+    };
+}
+
 /// Serialize any Zig struct as JSON, write it to the writer, then flush.
 /// Uses std.json.Stringify to automatically convert structs to JSON —
 /// no manual format strings needed.
@@ -95,6 +118,20 @@ fn runMessageLoop(allocator: Allocator, reader: *Reader, writer: *Writer) void {
                     .id = getRequestId(parsed.value),
                     .result = .{},
                 });
+            } else if (std.mem.eql(u8, m, "tools/call")) {
+                if (getToolName(parsed.value)) |name| {
+                    std.debug.print("ms-mcp: tool call: {s}\n", .{name});
+
+                    if (std.mem.eql(u8, name, "login")) {
+                        // Placeholder — will implement OAuth device code flow
+                        sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                            .id = getRequestId(parsed.value),
+                            .result = .{ .content = &.{
+                                .{ .text = "login not yet implemented" },
+                            } },
+                        });
+                    }
+                }
             } else if (std.mem.eql(u8, m, "tools/list")) {
                 // Respond with the list of tools this server offers. Empty for now.
                 sendJsonResponse(writer, types.JsonRpcResponse(types.ToolsListResult){
