@@ -19,15 +19,22 @@ pub fn main() !void {
     // `var` because reading mutates the reader's internal buffer position.
     var stdin = std.Io.File.stdin().reader(io, &read_buf);
 
-    // Read one line from stdin (up to the '\n' delimiter, which is excluded).
-    // Returns a slice into the reader's internal buffer — no allocation needed.
-    // Returns error.EndOfStream if stdin is closed before a newline arrives.
-    // File.Reader wraps an Io.Reader — access it via .interface field.
-    // Io.Reader has the high-level methods like takeDelimiterExclusive.
-    const line = stdin.interface.takeDelimiterExclusive('\n') catch |err| {
-        std.debug.print("ms-mcp: read error: {}\n", .{err});
-        return;
-    };
+    // Main message loop: read lines until stdin closes.
+    // Each line is one JSON-RPC message from the MCP client.
+    while (true) {
+        // takeDelimiter advances past the '\n'. Returns null at end of stream.
+        const line = stdin.interface.takeDelimiter('\n') catch |err| {
+            std.debug.print("ms-mcp: read error: {}\n", .{err});
+            return;
+        } orelse {
+            // null = end of stream = stdin closed. Normal shutdown.
+            std.debug.print("ms-mcp: stdin closed, shutting down\n", .{});
+            return;
+        };
 
-    std.debug.print("ms-mcp: got {d} bytes: {s}\n", .{ line.len, line });
+        // Skip empty lines (some clients send trailing newlines).
+        if (line.len == 0) continue;
+
+        std.debug.print("ms-mcp: got {d} bytes: {s}\n", .{ line.len, line });
+    }
 }
