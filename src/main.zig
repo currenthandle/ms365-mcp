@@ -97,6 +97,38 @@ fn getToolName(value: std.json.Value) ?[]const u8 {
     };
 }
 
+/// Extract the "arguments" object from a "tools/call" request.
+/// Tool calls with parameters look like:
+///   {"params": {"name": "send-email", "arguments": {"to": "...", "subject": "..."}}}
+/// Returns the arguments as a JSON ObjectMap, or null if missing.
+fn getToolArgs(value: std.json.Value) ?std.json.ObjectMap {
+    const obj = switch (value) {
+        .object => |o| o,
+        else => return null,
+    };
+
+    const params = switch (obj.get("params") orelse return null) {
+        .object => |o| o,
+        else => return null,
+    };
+
+    // "arguments" contains the tool-specific parameters.
+    return switch (params.get("arguments") orelse return null) {
+        .object => |o| o,
+        else => null,
+    };
+}
+
+/// Helper to extract a string value from a JSON ObjectMap.
+/// Returns null if the key is missing or the value isn't a string.
+fn getStringArg(args: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+    const val = args.get(key) orelse return null;
+    return switch (val) {
+        .string => |s| s,
+        else => null,
+    };
+}
+
 /// Serialize any Zig struct as JSON, write it to the writer, then flush.
 /// Uses std.json.Stringify to automatically convert structs to JSON —
 /// no manual format strings needed.
@@ -313,6 +345,109 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                             .id = getRequestId(parsed.value),
                             .result = result,
                         });
+                    } else if (std.mem.eql(u8, name, "send-email")) {
+                        // Check that we have an access token.
+                        const token = state.access_token orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Not logged in. Call login first." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        // Extract the arguments: to, subject, body.
+                        const args = getToolArgs(parsed.value) orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing arguments. Provide to, subject, and body." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        // Get each required string argument.
+                        const to = getStringArg(args, "to") orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing 'to' argument (email address)." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+                        const subject = getStringArg(args, "subject") orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing 'subject' argument." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+                        const body_text = getStringArg(args, "body") orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing 'body' argument." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        // Build the Graph API request body for POST /me/sendMail.
+                        // The format Microsoft expects:
+                        // {"message":{"subject":"...","body":{"contentType":"Text","content":"..."},
+                        //   "toRecipients":[{"emailAddress":{"address":"..."}}]}}
+                        const json_body = std.fmt.allocPrint(
+                            allocator,
+                            "{{\"message\":{{\"subject\":\"{s}\",\"body\":{{\"contentType\":\"Text\",\"content\":\"{s}\"}},\"toRecipients\":[{{\"emailAddress\":{{\"address\":\"{s}\"}}}}]}}}}",
+                            .{ subject, body_text, to },
+                        ) catch continue;
+                        defer allocator.free(json_body);
+
+                        // Send the email via Graph API.
+                        _ = graph.post(allocator, io, token, "/me/sendMail", json_body) catch |err| {
+                            std.debug.print("ms-mcp: send-email failed: {}\n", .{err});
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Failed to send email." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        // Success!
+                        const msg = std.fmt.allocPrint(
+                            allocator,
+                            "Email sent to {s}.",
+                            .{to},
+                        ) catch continue;
+                        defer allocator.free(msg);
+
+                        const content: []const types.TextContent = &.{
+                            .{ .text = msg },
+                        };
+                        const result = types.ToolCallResult{ .content = content };
+                        sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                            .id = getRequestId(parsed.value),
+                            .result = result,
+                        });
                     }
                 }
             } else if (std.mem.eql(u8, m, "tools/list")) {
@@ -333,6 +468,11 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                     .{
                         .name = "list-emails",
                         .description = "List the 10 most recent emails from your Microsoft 365 inbox.",
+                        .inputSchema = .{},
+                    },
+                    .{
+                        .name = "send-email",
+                        .description = "Send an email. Required arguments: to (email address), subject, body.",
                         .inputSchema = .{},
                     },
                 } },
