@@ -15,6 +15,25 @@ pub fn main() !void {
 
     std.debug.print("ms-mcp: server starting\n", .{});
 
+    // Read Microsoft OAuth config from environment variables.
+    // These are set in the MCP server config (.mcp.json).
+    // std.c.getenv calls the C library's getenv() — returns a pointer to the
+    // value string, or null if the variable isn't set.
+    // mem.span() converts the null-terminated C string to a Zig slice.
+    const client_id: []const u8 = if (std.c.getenv("MS365_CLIENT_ID")) |ptr|
+        std.mem.span(ptr)
+    else {
+        std.debug.print("ms-mcp: MS365_CLIENT_ID not set\n", .{});
+        return;
+    };
+
+    const tenant_id: []const u8 = if (std.c.getenv("MS365_TENANT_ID")) |ptr|
+        std.mem.span(ptr)
+    else {
+        std.debug.print("ms-mcp: MS365_TENANT_ID not set\n", .{});
+        return;
+    };
+
     var read_buf: [4096]u8 = undefined;
     const io = std.Options.debug_io;
     var stdin = std.Io.File.stdin().reader(io, &read_buf);
@@ -23,7 +42,7 @@ pub fn main() !void {
     var write_buf: [4096]u8 = undefined;
     var stdout = std.Io.File.stdout().writer(io, &write_buf);
 
-    runMessageLoop(allocator, &stdin.interface, &stdout.interface);
+    runMessageLoop(allocator, &stdin.interface, &stdout.interface, client_id, tenant_id);
 }
 
 /// Extract the integer "id" field from a JSON-RPC message object.
@@ -78,7 +97,11 @@ fn sendJsonResponse(writer: *Writer, response: anytype) void {
 
 /// Reads JSON-RPC messages from the reader one line at a time,
 /// parses them, and dispatches by method name.
-fn runMessageLoop(allocator: Allocator, reader: *Reader, writer: *Writer) void {
+fn runMessageLoop(allocator: Allocator, reader: *Reader, writer: *Writer, client_id: []const u8, tenant_id: []const u8) void {
+    // TODO: these will be used when the login tool calls auth.requestDeviceCode
+    _ = client_id;
+    _ = tenant_id;
+
     while (true) {
         const line = reader.takeDelimiter('\n') catch |err| {
             std.debug.print("ms-mcp: read error: {}\n", .{err});
