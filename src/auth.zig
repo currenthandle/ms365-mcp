@@ -183,21 +183,16 @@ pub fn pollForToken(
     );
     defer allocator.free(body);
 
-    // Poll interval in seconds. @intCast converts i64 to u64 since sleep takes unsigned.
-    // TODO: make this var once we handle Microsoft's "slow_down" response
-    // (which tells us to increase the interval).
-    const poll_interval: u64 = @intCast(interval);
-
-    // Total seconds before the device code expires.
-    const deadline: u64 = @intCast(expires_in);
-    var elapsed: u64 = 0;
+    // Track how long we've been polling so we know when the code expires.
+    var elapsed: i64 = 0;
 
     // Keep polling until the code expires.
-    while (elapsed < deadline) {
+    while (elapsed < expires_in) {
         // Wait before polling — Microsoft requires this delay.
-        // std.Thread.sleep takes nanoseconds, so multiply by ns_per_s.
-        std.Thread.sleep(poll_interval * std.time.ns_per_s);
-        elapsed += poll_interval;
+        // io.sleep() takes a Duration and a clock type.
+        // .awake means we only count time while the system is awake.
+        io.sleep(std.Io.Duration.fromSeconds(interval), .awake) catch {};
+        elapsed += interval;
 
         // Try to get a token.
         // During polling, Microsoft returns HTTP 400 with "authorization_pending"

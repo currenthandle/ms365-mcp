@@ -116,7 +116,6 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
     // Mutable state that lives for the entire session.
     // Starts with no device code and no token.
     var state = State{};
-    _ = &state; // TODO: remove once login/verify-login use state
 
     while (true) {
         const line = reader.takeDelimiter('\n') catch |err| {
@@ -170,8 +169,7 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                             std.debug.print("ms-mcp: device code request failed: {}\n", .{err});
 
                             // Tell the client the login failed.
-                            // We need the explicit type annotation here so Zig knows
-                            // this is a []const TextContent, not an anonymous struct.
+                            // Explicit type annotation so Zig knows this is []const TextContent.
                             const error_content: []const types.TextContent = &.{
                                 .{ .text = "Failed to start login flow" },
                             };
@@ -182,9 +180,10 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                             });
                             continue;
                         };
-                        defer allocator.free(dc.user_code);
-                        defer allocator.free(dc.device_code);
-                        defer allocator.free(dc.verification_uri);
+
+                        // Stash the device code in state so verify-login can use it.
+                        // Don't free dc strings here — state now owns them.
+                        state.pending_device_code = dc;
 
                         // Build a message telling the user where to go and what code to enter.
                         const msg = std.fmt.allocPrint(
@@ -195,9 +194,62 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                         defer allocator.free(msg);
 
                         // Send the message back to the client.
-                        // Explicit type so Zig knows this is []const TextContent.
                         const content: []const types.TextContent = &.{
                             .{ .text = msg },
+                        };
+                        const result = types.ToolCallResult{ .content = content };
+                        sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                            .id = getRequestId(parsed.value),
+                            .result = result,
+                        });
+                    } else if (std.mem.eql(u8, name, "verify-login")) {
+                        // Check that login was called first —
+                        // we need the device code from the login step.
+                        const dc = state.pending_device_code orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "No pending login. Call login first." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        // Poll Microsoft's token endpoint until the user completes login.
+                        // This blocks until success or the device code expires.
+                        const token = auth.pollForToken(
+                            allocator, io, client_id, tenant_id,
+                            dc.device_code, dc.expires_in, dc.interval,
+                        ) catch |err| {
+                            std.debug.print("ms-mcp: token poll failed: {}\n", .{err});
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Login failed or timed out. Try login again." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+                        // We don't need the refresh token yet — free it for now.
+                        // TODO: save refresh token for silent re-auth later.
+                        defer allocator.free(token.refresh_token);
+
+                        // Store the access token in state for future Graph API calls.
+                        state.access_token = token.access_token;
+
+                        // Clean up the pending device code — login is complete.
+                        // These strings were allocated in requestDeviceCode.
+                        allocator.free(dc.user_code);
+                        allocator.free(dc.device_code);
+                        allocator.free(dc.verification_uri);
+                        state.pending_device_code = null;
+
+                        const content: []const types.TextContent = &.{
+                            .{ .text = "Login successful!" },
                         };
                         const result = types.ToolCallResult{ .content = content };
                         sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
@@ -214,6 +266,11 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                     .{
                         .name = "login",
                         .description = "Start Microsoft 365 login flow. Returns a device code to enter at the verification URL.",
+                        .inputSchema = .{},
+                    },
+                    .{
+                        .name = "verify-login",
+                        .description = "Complete the login flow after entering the device code in the browser. Call login first.",
                         .inputSchema = .{},
                     },
                 } },
