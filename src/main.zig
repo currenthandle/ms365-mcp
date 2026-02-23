@@ -1,6 +1,7 @@
 const std = @import("std");
 const types = @import("types.zig");
 const http = @import("http.zig");
+const auth = @import("auth.zig");
 
 // Type aliases — keeps function signatures cleaner.
 const Allocator = std.mem.Allocator;
