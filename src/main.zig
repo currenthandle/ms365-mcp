@@ -98,10 +98,6 @@ fn sendJsonResponse(writer: *Writer, response: anytype) void {
 /// Reads JSON-RPC messages from the reader one line at a time,
 /// parses them, and dispatches by method name.
 fn runMessageLoop(allocator: Allocator, reader: *Reader, writer: *Writer, client_id: []const u8, tenant_id: []const u8) void {
-    // TODO: these will be used when the login tool calls auth.requestDeviceCode
-    _ = client_id;
-    _ = tenant_id;
-
     while (true) {
         const line = reader.takeDelimiter('\n') catch |err| {
             std.debug.print("ms-mcp: read error: {}\n", .{err});
@@ -148,12 +144,44 @@ fn runMessageLoop(allocator: Allocator, reader: *Reader, writer: *Writer, client
                     std.debug.print("ms-mcp: tool call: {s}\n", .{name});
 
                     if (std.mem.eql(u8, name, "login")) {
-                        // Placeholder — will implement OAuth device code flow
+                        // Start the OAuth device code flow — ask Microsoft for a code.
+                        const dc = auth.requestDeviceCode(allocator, client_id, tenant_id) catch {
+                            std.debug.print("ms-mcp: device code request failed\n", .{});
+
+                            // Tell the client the login failed.
+                            // We need the explicit type annotation here so Zig knows
+                            // this is a []const TextContent, not an anonymous struct.
+                            const error_content: []const types.TextContent = &.{
+                                .{ .text = "Failed to start login flow" },
+                            };
+                            const error_result = types.ToolCallResult{ .content = error_content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = error_result,
+                            });
+                            continue;
+                        };
+                        defer allocator.free(dc.user_code);
+                        defer allocator.free(dc.device_code);
+                        defer allocator.free(dc.verification_uri);
+
+                        // Build a message telling the user where to go and what code to enter.
+                        const msg = std.fmt.allocPrint(
+                            allocator,
+                            "Go to {s} and enter code: {s}",
+                            .{ dc.verification_uri, dc.user_code },
+                        ) catch continue;
+                        defer allocator.free(msg);
+
+                        // Send the message back to the client.
+                        // Explicit type so Zig knows this is []const TextContent.
+                        const content: []const types.TextContent = &.{
+                            .{ .text = msg },
+                        };
+                        const result = types.ToolCallResult{ .content = content };
                         sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
                             .id = getRequestId(parsed.value),
-                            .result = .{ .content = &.{
-                                .{ .text = "login not yet implemented" },
-                            } },
+                            .result = result,
                         });
                     }
                 }
