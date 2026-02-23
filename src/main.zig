@@ -267,6 +267,52 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                             .id = getRequestId(parsed.value),
                             .result = result,
                         });
+                    } else if (std.mem.eql(u8, name, "list-emails")) {
+                        // Check that we have an access token — user must be logged in.
+                        const token = state.access_token orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Not logged in. Call login first." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        // Call Graph API to list recent emails.
+                        // $top=10 — only get the 10 most recent
+                        // $select — only fetch the fields we need (saves bandwidth)
+                        // $orderby — newest first
+                        // %20 is a URL-encoded space for "receivedDateTime desc"
+                        const response_body = graph.get(
+                            allocator, io, token,
+                            "/me/messages?$top=10&$select=subject,from,receivedDateTime,bodyPreview&$orderby=receivedDateTime%20desc",
+                        ) catch |err| {
+                            std.debug.print("ms-mcp: list-emails failed: {}\n", .{err});
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Failed to fetch emails." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+                        defer allocator.free(response_body);
+
+                        // Return the raw JSON to the LLM.
+                        // The LLM can parse and summarize it for the user.
+                        const content: []const types.TextContent = &.{
+                            .{ .text = response_body },
+                        };
+                        const result = types.ToolCallResult{ .content = content };
+                        sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                            .id = getRequestId(parsed.value),
+                            .result = result,
+                        });
                     }
                 }
             } else if (std.mem.eql(u8, m, "tools/list")) {
@@ -282,6 +328,11 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                     .{
                         .name = "verify-login",
                         .description = "Complete the login flow after entering the device code in the browser. Call login first.",
+                        .inputSchema = .{},
+                    },
+                    .{
+                        .name = "list-emails",
+                        .description = "List the 10 most recent emails from your Microsoft 365 inbox.",
                         .inputSchema = .{},
                     },
                 } },
