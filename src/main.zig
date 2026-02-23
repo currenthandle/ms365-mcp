@@ -188,7 +188,7 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                         // Build a message telling the user where to go and what code to enter.
                         const msg = std.fmt.allocPrint(
                             allocator,
-                            "Go to {s} and enter code: {s}\nAfter signing in, call the verify-login tool.",
+                            "Go to {s} and enter code: {s}\nImmediately call the verify-login tool now. It will poll and wait for the user to complete sign-in.",
                             .{ dc.verification_uri, dc.user_code },
                         ) catch continue;
                         defer allocator.free(msg);
