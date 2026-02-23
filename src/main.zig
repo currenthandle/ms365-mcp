@@ -34,15 +34,21 @@ pub fn main() !void {
         return;
     };
 
+    // Create a full I/O context with networking support.
+    // Threaded.init() sets up an Io that can do real network operations (TCP, TLS).
+    // debug_io (what we used before) only supports file I/O, not networking.
+    // We use this for both stdin/stdout and HTTP requests.
+    var threaded_io = std.Io.Threaded.init(allocator, .{});
+    const io = threaded_io.io();
+
     var read_buf: [4096]u8 = undefined;
-    const io = std.Options.debug_io;
     var stdin = std.Io.File.stdin().reader(io, &read_buf);
 
     // Stdout writer — where we send JSON-RPC responses back to the client.
     var write_buf: [4096]u8 = undefined;
     var stdout = std.Io.File.stdout().writer(io, &write_buf);
 
-    runMessageLoop(allocator, &stdin.interface, &stdout.interface, client_id, tenant_id);
+    runMessageLoop(allocator, io, &stdin.interface, &stdout.interface, client_id, tenant_id);
 }
 
 /// Extract the integer "id" field from a JSON-RPC message object.
@@ -97,7 +103,7 @@ fn sendJsonResponse(writer: *Writer, response: anytype) void {
 
 /// Reads JSON-RPC messages from the reader one line at a time,
 /// parses them, and dispatches by method name.
-fn runMessageLoop(allocator: Allocator, reader: *Reader, writer: *Writer, client_id: []const u8, tenant_id: []const u8) void {
+fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Writer, client_id: []const u8, tenant_id: []const u8) void {
     while (true) {
         const line = reader.takeDelimiter('\n') catch |err| {
             std.debug.print("ms-mcp: read error: {}\n", .{err});
@@ -145,8 +151,9 @@ fn runMessageLoop(allocator: Allocator, reader: *Reader, writer: *Writer, client
 
                     if (std.mem.eql(u8, name, "login")) {
                         // Start the OAuth device code flow — ask Microsoft for a code.
-                        const dc = auth.requestDeviceCode(allocator, client_id, tenant_id) catch {
-                            std.debug.print("ms-mcp: device code request failed\n", .{});
+                        const dc = auth.requestDeviceCode(allocator, io, client_id, tenant_id) catch |err| {
+                            // Print the actual error so we can debug.
+                            std.debug.print("ms-mcp: device code request failed: {}\n", .{err});
 
                             // Tell the client the login failed.
                             // We need the explicit type annotation here so Zig knows

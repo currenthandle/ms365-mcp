@@ -8,6 +8,7 @@ const std = @import("std");
 const http = @import("http.zig");
 
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 /// All the Microsoft Graph permissions we need.
 /// "offline_access" gives us a refresh token so we can get new access tokens
@@ -49,6 +50,7 @@ pub const TokenResponse = struct {
 /// (user_code, device_code, verification_uri) with the same allocator.
 pub fn requestDeviceCode(
     allocator: Allocator,
+    io: Io,
     client_id: []const u8,
     tenant_id: []const u8,
 ) !DeviceCodeResponse {
@@ -70,7 +72,7 @@ pub fn requestDeviceCode(
 
     // POST to Microsoft's device code endpoint.
     // http.post returns the raw response body as an allocated slice.
-    const response_body = try http.post(allocator, url, body);
+    const response_body = try http.post(allocator, io, url, body);
     defer allocator.free(response_body);
 
     // Parse the JSON response into a dynamic Value so we can extract fields.
@@ -157,6 +159,7 @@ pub fn requestDeviceCode(
 /// (access_token, refresh_token) with the same allocator.
 pub fn pollForToken(
     allocator: Allocator,
+    io: Io,
     client_id: []const u8,
     tenant_id: []const u8,
     device_code: []const u8,
@@ -200,7 +203,7 @@ pub fn pollForToken(
         // During polling, Microsoft returns HTTP 400 with "authorization_pending"
         // until the user completes login. http.post returns error.HttpError for 4xx,
         // so we catch that and keep polling.
-        const response_body = http.post(allocator, url, body) catch |err| {
+        const response_body = http.post(allocator, io, url, body) catch |err| {
             if (err == error.HttpError) {
                 // Expected — user hasn't logged in yet. Keep waiting.
                 std.debug.print("ms-mcp: waiting for user to log in...\n", .{});

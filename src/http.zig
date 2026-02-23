@@ -6,16 +6,19 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 /// Make an HTTPS POST request with a form-encoded body.
 /// Used by the OAuth device code flow which expects
 /// Content-Type: application/x-www-form-urlencoded.
 ///
+/// The `io` parameter provides the network I/O context — it must support
+/// networking (not debug_io, which has networking disabled).
+///
 /// Returns the response body as an allocated slice — caller must free it.
-pub fn post(allocator: Allocator, url: []const u8, body: []const u8) ![]u8 {
+pub fn post(allocator: Allocator, io: Io, url: []const u8, body: []const u8) ![]u8 {
     // The HTTP client needs an Io context for network operations
     // and an allocator for internal buffers (connection pool, TLS, etc).
-    const io = std.Options.debug_io;
     var client: std.http.Client = .{ .allocator = allocator, .io = io };
     defer client.deinit();
 
