@@ -101,9 +101,23 @@ fn sendJsonResponse(writer: *Writer, response: anytype) void {
     writer.flush() catch return; // flush so the client sees it immediately
 }
 
+/// Server state that persists across tool calls within a session.
+/// We need this because the login flow is split across two tool calls:
+///   1. "login" gets the device code and stashes it here
+///   2. "verify-login" reads it from here and polls for the token
+const State = struct {
+    pending_device_code: ?auth.DeviceCodeResponse = null,
+    access_token: ?[]const u8 = null,
+};
+
 /// Reads JSON-RPC messages from the reader one line at a time,
 /// parses them, and dispatches by method name.
 fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Writer, client_id: []const u8, tenant_id: []const u8) void {
+    // Mutable state that lives for the entire session.
+    // Starts with no device code and no token.
+    var state = State{};
+    _ = &state; // TODO: remove once login/verify-login use state
+
     while (true) {
         const line = reader.takeDelimiter('\n') catch |err| {
             std.debug.print("ms-mcp: read error: {}\n", .{err});
