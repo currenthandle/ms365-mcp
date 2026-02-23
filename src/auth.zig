@@ -310,3 +310,76 @@ pub fn saveToken(
 
     std.debug.print("ms-mcp: token saved to {s}\n", .{path});
 }
+
+/// Token data loaded from disk.
+/// Caller owns the strings and must free them with the same allocator.
+pub const SavedToken = struct {
+    access_token: []const u8,
+    refresh_token: []const u8,
+    expires_at: i64,
+};
+
+/// Load tokens from ~/.ms365-zig-mcp-token.json.
+/// Returns null if the file doesn't exist or can't be read.
+/// Caller owns the returned strings and must free them.
+pub fn loadToken(allocator: Allocator, io: Io) ?SavedToken {
+    // Get the user's home directory.
+    const home = std.mem.span(std.c.getenv("HOME") orelse return null);
+
+    // Build the file path.
+    const path = std.fmt.allocPrint(allocator, "{s}/{s}", .{ home, token_filename }) catch return null;
+    defer allocator.free(path);
+
+    // Try to read the file. Return null if it doesn't exist or fails.
+    const data = std.Io.Dir.readFileAlloc(.cwd(), io, path, allocator, .unlimited) catch return null;
+    defer allocator.free(data);
+
+    std.debug.print("ms-mcp: loaded token from {s}\n", .{path});
+
+    // Parse the JSON into a dynamic Value.
+    const parsed = std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        data,
+        .{},
+    ) catch return null;
+    defer parsed.deinit();
+
+    // Unwrap the JSON object.
+    const obj = switch (parsed.value) {
+        .object => |o| o,
+        else => return null,
+    };
+
+    // Extract "access_token" — the Bearer token for Graph API calls.
+    const access_token_val = obj.get("access_token") orelse return null;
+    const access_token_str = switch (access_token_val) {
+        .string => |s| s,
+        else => return null,
+    };
+
+    // Extract "refresh_token" — used to get a new access_token when it expires.
+    const refresh_token_val = obj.get("refresh_token") orelse return null;
+    const refresh_token_str = switch (refresh_token_val) {
+        .string => |s| s,
+        else => return null,
+    };
+
+    // Extract "expires_at" — Unix timestamp when the access token expires.
+    const expires_at_val = obj.get("expires_at") orelse return null;
+    const expires_at_int = switch (expires_at_val) {
+        .integer => |n| n,
+        else => return null,
+    };
+
+    // Dupe strings into caller-owned memory.
+    // parsed.deinit() will free the original JSON buffer.
+    const access_token = allocator.dupe(u8, access_token_str) catch return null;
+    const refresh_token = allocator.dupe(u8, refresh_token_str) catch return null;
+
+    return .{
+        .access_token = access_token,
+        .refresh_token = refresh_token,
+        .expires_at = expires_at_int,
+    };
+}

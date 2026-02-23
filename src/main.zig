@@ -48,7 +48,11 @@ pub fn main() !void {
     var write_buf: [4096]u8 = undefined;
     var stdout = std.Io.File.stdout().writer(io, &write_buf);
 
-    runMessageLoop(allocator, io, &stdin.interface, &stdout.interface, client_id, tenant_id);
+    // Try to load a saved token from a previous session.
+    // If found, we can skip the login flow entirely.
+    const saved_token = auth.loadToken(allocator, io);
+
+    runMessageLoop(allocator, io, &stdin.interface, &stdout.interface, client_id, tenant_id, saved_token);
 }
 
 /// Extract the integer "id" field from a JSON-RPC message object.
@@ -112,10 +116,14 @@ const State = struct {
 
 /// Reads JSON-RPC messages from the reader one line at a time,
 /// parses them, and dispatches by method name.
-fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Writer, client_id: []const u8, tenant_id: []const u8) void {
+fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Writer, client_id: []const u8, tenant_id: []const u8, saved_token: ?auth.SavedToken) void {
     // Mutable state that lives for the entire session.
-    // Starts with no device code and no token.
+    // If we loaded a token from disk, use it. Otherwise start empty.
     var state = State{};
+    if (saved_token) |t| {
+        state.access_token = t.access_token;
+        std.debug.print("ms-mcp: using saved token (expires_at={d})\n", .{t.expires_at});
+    }
 
     while (true) {
         const line = reader.takeDelimiter('\n') catch |err| {
