@@ -234,8 +234,10 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                             });
                             continue;
                         };
-                        // We don't need the refresh token yet — free it for now.
-                        // TODO: save refresh token for silent re-auth later.
+                        // Save tokens to disk so we can re-use them next session.
+                        auth.saveToken(allocator, io, token.access_token, token.refresh_token, token.expires_in) catch |err| {
+                            std.debug.print("ms-mcp: failed to save token: {}\n", .{err});
+                        };
                         defer allocator.free(token.refresh_token);
 
                         // Store the access token in state for future Graph API calls.

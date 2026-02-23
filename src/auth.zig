@@ -262,3 +262,51 @@ pub fn pollForToken(
     // If we get here, the device code expired before the user logged in.
     return error.DeviceCodeExpired;
 }
+
+/// The file name where we save tokens in the user's home directory.
+const token_filename = ".ms365-zig-mcp-token.json";
+
+/// Save tokens to ~/.ms365-zig-mcp-token.json so we can re-use them
+/// next time the server starts without requiring a new login.
+///
+/// We store expires_at (absolute Unix timestamp) instead of expires_in
+/// (relative seconds) so we can check if the token is expired later.
+pub fn saveToken(
+    allocator: Allocator,
+    io: Io,
+    access_token: []const u8,
+    refresh_token: []const u8,
+    expires_in: i64,
+) !void {
+    // Get the user's home directory from the HOME environment variable.
+    // std.c.getenv returns a C string pointer, mem.span converts to a Zig slice.
+    const home = std.mem.span(std.c.getenv("HOME") orelse return error.NoHomeDir);
+
+    // Build the full file path: /home/user/.ms365-zig-mcp-token.json
+    const path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ home, token_filename });
+    defer allocator.free(path);
+
+    // Calculate when the token expires as an absolute Unix timestamp.
+    // Clock.now gives nanoseconds since epoch; toSeconds() converts.
+    const now_secs = std.Io.Timestamp.now(io, .real).toSeconds();
+    const expires_at = now_secs + expires_in;
+
+    // Build the JSON string to write.
+    // We write it manually since we just have three fields.
+    const json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"access_token\":\"{s}\",\"refresh_token\":\"{s}\",\"expires_at\":{d}}}",
+        .{ access_token, refresh_token, expires_at },
+    );
+    defer allocator.free(json);
+
+    // Write the file. Dir.cwd() gives the current working directory handle,
+    // but we use an absolute path so the cwd doesn't matter.
+    // writeFile creates the file if it doesn't exist, or overwrites it.
+    try std.Io.Dir.writeFile(.cwd(), io, .{
+        .sub_path = path,
+        .data = json,
+    });
+
+    std.debug.print("ms-mcp: token saved to {s}\n", .{path});
+}
