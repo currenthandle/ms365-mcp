@@ -34,6 +34,84 @@ pub fn post(allocator: Allocator, io: Io, access_token: []const u8, path: []cons
     return request(allocator, io, access_token, .POST, path, json_body);
 }
 
+/// Make an authenticated GET request with an additional Prefer header.
+/// Used for calendar endpoints that accept `Prefer: outlook.timezone="..."`.
+/// This makes the API return times in the specified timezone AND interpret
+/// query parameters (like startDateTime) in that timezone.
+pub fn getWithPrefer(allocator: Allocator, io: Io, access_token: []const u8, path: []const u8, prefer: []const u8) ![]u8 {
+    // Build the full URL.
+    const url = try std.fmt.allocPrint(allocator, "{s}{s}", .{ base_url, path });
+    defer allocator.free(url);
+
+    const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{access_token});
+    defer allocator.free(auth_header);
+
+    var client: std.http.Client = .{ .allocator = allocator, .io = io };
+    defer client.deinit();
+
+    var response_buf: std.Io.Writer.Allocating = .init(allocator);
+    defer response_buf.deinit();
+
+    // Debug: log the request.
+    std.debug.print("ms-mcp: {s} {s}\n", .{ "GET", url });
+
+    // Three headers: Authorization, Prefer, and no Content-Type (GET has no body).
+    const headers = &[_]std.http.Header{
+        .{ .name = "Authorization", .value = auth_header },
+        .{ .name = "Prefer", .value = prefer },
+    };
+
+    _ = try client.fetch(.{
+        .location = .{ .url = url },
+        .method = .GET,
+        .extra_headers = headers,
+        .response_writer = &response_buf.writer,
+    });
+
+    return response_buf.toOwnedSlice();
+}
+
+/// Make an authenticated PATCH request to the Graph API with a JSON body.
+///
+/// `path` is the API path after /v1.0, e.g. "/me/events/{id}".
+/// `json_body` is the JSON string with the fields to update.
+///
+/// Returns the response body as an allocated slice — caller must free it.
+pub fn patch(allocator: Allocator, io: Io, access_token: []const u8, path: []const u8, json_body: []const u8) ![]u8 {
+    return request(allocator, io, access_token, .PATCH, path, json_body);
+}
+
+/// Make an authenticated DELETE request to the Graph API.
+///
+/// `path` is the API path after /v1.0, e.g. "/me/events/{id}".
+///
+/// DELETE endpoints return 204 No Content — no response body.
+/// We skip the response_writer to avoid hanging on the empty body.
+pub fn delete(allocator: Allocator, io: Io, access_token: []const u8, path: []const u8) !void {
+    const url = try std.fmt.allocPrint(allocator, "{s}{s}", .{ base_url, path });
+    defer allocator.free(url);
+
+    std.debug.print("ms-mcp: DELETE {s}\n", .{url});
+
+    const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{access_token});
+    defer allocator.free(auth_header);
+
+    var client: std.http.Client = .{ .allocator = allocator, .io = io };
+    defer client.deinit();
+
+    // keep_alive=false sends "Connection: close" so the server closes the
+    // connection after the 204 response. Without this, discardRemaining()
+    // blocks waiting for data that will never come on the keep-alive connection.
+    _ = try client.fetch(.{
+        .location = .{ .url = url },
+        .method = .DELETE,
+        .keep_alive = false,
+        .extra_headers = &[_]std.http.Header{
+            .{ .name = "Authorization", .value = auth_header },
+        },
+    });
+}
+
 /// Internal: shared logic for all Graph API requests.
 /// Builds the URL, sets up auth headers, sends the request, checks for errors.
 ///
@@ -50,6 +128,10 @@ fn request(
     // Build the full URL: https://graph.microsoft.com/v1.0{path}
     const url = try std.fmt.allocPrint(allocator, "{s}{s}", .{ base_url, path });
     defer allocator.free(url);
+
+    // Debug: log the full URL and body so we can diagnose request issues.
+    std.debug.print("ms-mcp: {s} {s}\n", .{ @tagName(method), url });
+    if (json_body) |b| std.debug.print("ms-mcp: body={s}\n", .{b});
 
     // Build the Authorization header value: "Bearer {token}"
     const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{access_token});
@@ -74,7 +156,9 @@ fn request(
     };
 
     // fetch() sends the request and reads the response in one call.
-    const result = try client.fetch(.{
+    // We don't check the status — we always return the body.
+    // _ discards the result since Zig requires all values to be used.
+    _ = try client.fetch(.{
         .location = .{ .url = url },
         .method = method,
         .payload = json_body,
@@ -82,16 +166,9 @@ fn request(
         .response_writer = &response_buf.writer,
     });
 
-    // Check for HTTP errors (anything 400+).
-    if (@intFromEnum(result.status) >= 400) {
-        std.debug.print("ms-mcp: Graph API {s} {d}: {s}\n", .{
-            @tagName(method),
-            @intFromEnum(result.status),
-            response_buf.written(),
-        });
-        return error.HttpError;
-    }
-
-    // Transfer ownership of the buffer to the caller.
+    // Always return the response body — even on errors.
+    // If Microsoft returns a 4xx/5xx, the body contains a JSON error
+    // message explaining what went wrong. The LLM can read it and
+    // tell the user, which is way more useful than a generic "failed".
     return response_buf.toOwnedSlice();
 }

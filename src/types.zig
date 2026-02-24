@@ -47,16 +47,12 @@ pub const ToolsListResult = struct {
 
 /// Describes a single tool the server offers.
 /// The client uses this to know what tools are available and how to call them.
+/// inputSchema is std.json.Value because JSON Schema is dynamic —
+/// each tool has different properties, and Zig structs are fixed at compile time.
 pub const ToolDefinition = struct {
     name: []const u8,
     description: []const u8,
-    inputSchema: InputSchema,
-};
-
-/// JSON Schema describing what arguments a tool accepts.
-pub const InputSchema = struct {
-    type: []const u8 = "object",
-    properties: struct {} = .{}, // empty for now — tools with no required args
+    inputSchema: std.json.Value,
 };
 
 /// The result of a "tools/call" response.
@@ -70,4 +66,92 @@ pub const ToolCallResult = struct {
 pub const TextContent = struct {
     type: []const u8 = "text",
     text: []const u8,
+};
+
+/// Microsoft Graph API request body for POST /me/events.
+/// Creates a calendar event with subject, start/end times, and optional attendees.
+pub const CreateEventRequest = struct {
+    subject: []const u8,
+    start: DateTimeTimeZone,
+    end: DateTimeTimeZone,
+    /// Optional body content for the event.
+    body: ?Body = null,
+    /// Optional location name.
+    location: ?Location = null,
+    /// Optional list of attendees (both required and optional).
+    attendees: ?[]const Attendee = null,
+    /// Whether this is an all-day event.
+    isAllDay: ?bool = null,
+
+    /// A date-time with its time zone.
+    /// Graph API expects: {"dateTime": "2026-02-24T09:00:00", "timeZone": "UTC"}
+    pub const DateTimeTimeZone = struct {
+        dateTime: []const u8,
+        timeZone: []const u8 = "UTC",
+    };
+
+    pub const Body = struct {
+        contentType: []const u8 = "Text",
+        content: []const u8,
+    };
+
+    pub const Location = struct {
+        displayName: []const u8,
+    };
+
+    /// A meeting attendee — has an email and a type ("required" or "optional").
+    pub const Attendee = struct {
+        emailAddress: EmailAddress,
+        type: []const u8 = "required",
+
+        pub const EmailAddress = struct {
+            address: []const u8,
+        };
+    };
+};
+
+/// Microsoft Graph API request body for POST /me/chats/{chatId}/messages.
+/// Simple structure: {"body": {"content": "message text"}}
+pub const ChatMessageRequest = struct {
+    body: Body,
+
+    pub const Body = struct {
+        content: []const u8,
+    };
+};
+
+/// Microsoft Graph API request body for POST /me/sendMail.
+/// Nested structs mirror the JSON shape Microsoft expects:
+///   {"message":{"subject":"...","body":{...},"toRecipients":[{...}]}}
+///
+/// std.json.Stringify will serialize this to JSON automatically —
+/// no manual format strings or escaped braces needed.
+pub const SendMailRequest = struct {
+    message: Message,
+
+    pub const Message = struct {
+        subject: []const u8,
+        body: Body,
+        toRecipients: []const Recipient,
+        /// Optional CC recipients — omitted from JSON when null.
+        ccRecipients: ?[]const Recipient = null,
+        /// Optional BCC recipients — omitted from JSON when null.
+        bccRecipients: ?[]const Recipient = null,
+
+        /// The email body — has a content type (Text or HTML) and the actual content.
+        pub const Body = struct {
+            contentType: []const u8 = "Text",
+            content: []const u8,
+        };
+
+        /// A single email recipient — wraps an EmailAddress.
+        /// Graph API nests it: {"emailAddress": {"address": "foo@bar.com"}}
+        pub const Recipient = struct {
+            emailAddress: EmailAddress,
+
+            pub const EmailAddress = struct {
+                address: []const u8,
+            };
+        };
+    };
 };

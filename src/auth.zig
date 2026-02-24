@@ -18,6 +18,7 @@ const scopes =
     "Mail.Read " ++
     "Mail.Send " ++
     "Calendars.ReadWrite " ++
+    "MailboxSettings.ReadWrite " ++
     "Chat.Read " ++
     "Chat.ReadWrite " ++
     "ChatMessage.Send " ++
@@ -261,6 +262,78 @@ pub fn pollForToken(
 
     // If we get here, the device code expired before the user logged in.
     return error.DeviceCodeExpired;
+}
+
+/// Silently refresh an expired access token using the refresh token.
+/// Microsoft's OAuth token endpoint accepts grant_type=refresh_token
+/// and returns a new access_token + refresh_token pair.
+/// Returns null if the refresh fails (e.g. refresh token itself expired).
+pub fn refreshToken(
+    allocator: Allocator,
+    io: Io,
+    client_id: []const u8,
+    tenant_id: []const u8,
+    refresh_token: []const u8,
+) ?TokenResponse {
+    // Build the token endpoint URL.
+    const url = std.fmt.allocPrint(
+        allocator,
+        "https://login.microsoftonline.com/{s}/oauth2/v2.0/token",
+        .{tenant_id},
+    ) catch return null;
+    defer allocator.free(url);
+
+    // Build the form body with grant_type=refresh_token.
+    const body = std.fmt.allocPrint(
+        allocator,
+        "grant_type=refresh_token&client_id={s}&refresh_token={s}&scope={s}",
+        .{ client_id, refresh_token, scopes },
+    ) catch return null;
+    defer allocator.free(body);
+
+    std.debug.print("ms-mcp: refreshing access token...\n", .{});
+
+    // POST to the token endpoint.
+    const response_body = http.post(allocator, io, url, body) catch |err| {
+        std.debug.print("ms-mcp: token refresh failed: {}\n", .{err});
+        return null;
+    };
+    defer allocator.free(response_body);
+
+    // Parse the response JSON — same shape as the device code token response.
+    const parsed = std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        response_body,
+        .{},
+    ) catch return null;
+    defer parsed.deinit();
+
+    const obj = switch (parsed.value) {
+        .object => |o| o,
+        else => return null,
+    };
+
+    const access_token_str = switch (obj.get("access_token") orelse return null) {
+        .string => |s| s,
+        else => return null,
+    };
+    const refresh_token_str = switch (obj.get("refresh_token") orelse return null) {
+        .string => |s| s,
+        else => return null,
+    };
+    const expires_in_int = switch (obj.get("expires_in") orelse return null) {
+        .integer => |n| n,
+        else => return null,
+    };
+
+    std.debug.print("ms-mcp: token refreshed, expires in {d}s\n", .{expires_in_int});
+
+    return .{
+        .access_token = allocator.dupe(u8, access_token_str) catch return null,
+        .refresh_token = allocator.dupe(u8, refresh_token_str) catch return null,
+        .expires_in = expires_in_int,
+    };
 }
 
 /// The file name where we save tokens in the user's home directory.
