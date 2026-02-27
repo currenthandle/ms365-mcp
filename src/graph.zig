@@ -30,7 +30,7 @@ pub fn get(allocator: Allocator, io: Io, access_token: []const u8, path: []const
 ///
 /// Returns the response body as an allocated slice — caller must free it.
 /// Note: some Graph endpoints (like sendMail) return 202 with an empty body on success.
-pub fn post(allocator: Allocator, io: Io, access_token: []const u8, path: []const u8, json_body: []const u8) ![]u8 {
+pub fn post(allocator: Allocator, io: Io, access_token: []const u8, path: []const u8, json_body: ?[]const u8) ![]u8 {
     return request(allocator, io, access_token, .POST, path, json_body);
 }
 

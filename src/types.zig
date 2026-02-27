@@ -155,3 +155,15 @@ pub const SendMailRequest = struct {
         };
     };
 };
+
+/// Request body for POST /me/messages (creates a draft without sending).
+/// Same shape as SendMailRequest.Message but used as a top-level payload.
+pub const DraftMailRequest = struct {
+    subject: []const u8,
+    body: SendMailRequest.Message.Body,
+    toRecipients: []const SendMailRequest.Message.Recipient,
+    /// Optional CC recipients — omitted from JSON when null.
+    ccRecipients: ?[]const SendMailRequest.Message.Recipient = null,
+    /// Optional BCC recipients — omitted from JSON when null.
+    bccRecipients: ?[]const SendMailRequest.Message.Recipient = null,
+};

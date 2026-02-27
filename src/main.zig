@@ -1089,6 +1089,663 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                             .id = getRequestId(parsed.value),
                             .result = result,
                         });
+                    } else if (std.mem.eql(u8, name, "create-draft")) {
+                        // Create a draft email (saved to Drafts folder, not sent).
+                        const token = requireAuth(&state, allocator, io, client_id, tenant_id, writer, getRequestId(parsed.value)) orelse continue;
+
+                        const args = getToolArgs(parsed.value) orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing arguments. Provide to, subject, and body." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        // Parse recipients (to is required, cc/bcc optional).
+                        const to_recipients = parseRecipients(allocator, args, "to") catch continue orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing 'to' argument (array of email addresses)." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+                        defer allocator.free(to_recipients);
+
+                        const cc_recipients = parseRecipients(allocator, args, "cc") catch continue;
+                        defer if (cc_recipients) |cc| allocator.free(cc);
+
+                        const bcc_recipients = parseRecipients(allocator, args, "bcc") catch continue;
+                        defer if (bcc_recipients) |bcc| allocator.free(bcc);
+
+                        const subject = getStringArg(args, "subject") orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing 'subject' argument." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+                        const body_text = getStringArg(args, "body") orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing 'body' argument." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        // Build the Graph API request body for POST /me/messages.
+                        // This creates a draft — no sendMail wrapper needed.
+                        // Auto-detect HTML body: if it contains common HTML tags, set contentType to HTML.
+                        const body_is_html = std.mem.indexOf(u8, body_text, "<html") != null or
+                            std.mem.indexOf(u8, body_text, "<div") != null or
+                            std.mem.indexOf(u8, body_text, "<p>") != null or
+                            std.mem.indexOf(u8, body_text, "<br") != null or
+                            std.mem.indexOf(u8, body_text, "<img") != null or
+                            std.mem.indexOf(u8, body_text, "<table") != null;
+                        const body_content_type: []const u8 = if (body_is_html) "HTML" else "Text";
+
+                        const draft_request = types.DraftMailRequest{
+                            .subject = subject,
+                            .body = .{ .contentType = body_content_type, .content = body_text },
+                            .toRecipients = to_recipients,
+                            .ccRecipients = cc_recipients,
+                            .bccRecipients = bcc_recipients,
+                        };
+
+                        var json_buf: std.Io.Writer.Allocating = .init(allocator);
+                        defer json_buf.deinit();
+                        std.json.Stringify.value(draft_request, .{ .emit_null_optional_fields = false }, &json_buf.writer) catch continue;
+                        const json_body = json_buf.written();
+
+                        // POST /me/messages creates a draft in the Drafts folder.
+                        const response = graph.post(allocator, io, token, "/me/messages", json_body) catch |err| {
+                            std.debug.print("ms-mcp: create-draft failed: {}\n", .{err});
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Failed to create draft." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+                        defer allocator.free(response);
+
+                        // Parse the response to extract the draft message ID.
+                        const draft_parsed = std.json.parseFromSlice(std.json.Value, allocator, response, .{}) catch {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Draft created but could not parse response." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+                        defer draft_parsed.deinit();
+
+                        const draft_id = if (draft_parsed.value.object.get("id")) |id_val| switch (id_val) {
+                            .string => |s| s,
+                            else => "(unknown)",
+                        } else "(unknown)";
+
+                        // Format a success message with the draft ID.
+                        const msg = std.fmt.allocPrint(allocator, "Draft created successfully. Draft ID: {s}", .{draft_id}) catch continue;
+                        defer allocator.free(msg);
+
+                        const content: []const types.TextContent = &.{
+                            .{ .text = msg },
+                        };
+                        const result = types.ToolCallResult{ .content = content };
+                        sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                            .id = getRequestId(parsed.value),
+                            .result = result,
+                        });
+                    } else if (std.mem.eql(u8, name, "send-draft")) {
+                        // Send a previously created draft email.
+                        const token = requireAuth(&state, allocator, io, client_id, tenant_id, writer, getRequestId(parsed.value)) orelse continue;
+
+                        const args = getToolArgs(parsed.value) orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing arguments. Provide draftId." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        const draft_id = getStringArg(args, "draftId") orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing 'draftId' argument." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        // POST /me/messages/{id}/send — sends the draft, no body needed.
+                        const path = std.fmt.allocPrint(allocator, "/me/messages/{s}/send", .{draft_id}) catch continue;
+                        defer allocator.free(path);
+
+                        _ = graph.post(allocator, io, token, path, null) catch |err| {
+                            std.debug.print("ms-mcp: send-draft failed: {}\n", .{err});
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Failed to send draft." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        const content: []const types.TextContent = &.{
+                            .{ .text = "Draft sent successfully." },
+                        };
+                        const result = types.ToolCallResult{ .content = content };
+                        sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                            .id = getRequestId(parsed.value),
+                            .result = result,
+                        });
+                    } else if (std.mem.eql(u8, name, "update-draft")) {
+                        // Update an existing draft email's subject, body, or recipients.
+                        const token = requireAuth(&state, allocator, io, client_id, tenant_id, writer, getRequestId(parsed.value)) orelse continue;
+
+                        const args = getToolArgs(parsed.value) orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing arguments. Provide draftId and fields to update." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        const draft_id = getStringArg(args, "draftId") orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing 'draftId' argument." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        // Build the PATCH body with only the fields that were provided.
+                        // We use std.json.Value to build a dynamic object.
+                        var patch_obj = std.json.ObjectMap.init(allocator);
+                        defer patch_obj.deinit();
+
+                        // Optional subject update.
+                        if (getStringArg(args, "subject")) |subject| {
+                            patch_obj.put("subject", .{ .string = subject }) catch continue;
+                        }
+
+                        // Optional body update.
+                        // Auto-detect HTML: if the body contains common HTML tags, use HTML content type.
+                        if (getStringArg(args, "body")) |body_text| {
+                            const update_is_html = std.mem.indexOf(u8, body_text, "<html") != null or
+                                std.mem.indexOf(u8, body_text, "<div") != null or
+                                std.mem.indexOf(u8, body_text, "<p>") != null or
+                                std.mem.indexOf(u8, body_text, "<br") != null or
+                                std.mem.indexOf(u8, body_text, "<img") != null or
+                                std.mem.indexOf(u8, body_text, "<table") != null;
+                            const update_body_type: []const u8 = if (update_is_html) "HTML" else "Text";
+                            var body_obj = std.json.ObjectMap.init(allocator);
+                            body_obj.put("contentType", .{ .string = update_body_type }) catch continue;
+                            body_obj.put("content", .{ .string = body_text }) catch continue;
+                            patch_obj.put("body", .{ .object = body_obj }) catch continue;
+                        }
+
+                        // Optional toRecipients update.
+                        if (parseRecipients(allocator, args, "to") catch continue) |to_recipients| {
+                            defer allocator.free(to_recipients);
+                            var to_arr = std.json.Array.initCapacity(allocator, to_recipients.len) catch continue;
+                            for (to_recipients) |r| {
+                                var email_obj = std.json.ObjectMap.init(allocator);
+                                email_obj.put("address", .{ .string = r.emailAddress.address }) catch continue;
+                                var recip_obj = std.json.ObjectMap.init(allocator);
+                                recip_obj.put("emailAddress", .{ .object = email_obj }) catch continue;
+                                to_arr.appendAssumeCapacity(.{ .object = recip_obj });
+                            }
+                            patch_obj.put("toRecipients", .{ .array = to_arr }) catch continue;
+                        }
+
+                        // Optional ccRecipients update.
+                        if (parseRecipients(allocator, args, "cc") catch continue) |cc_recipients| {
+                            defer allocator.free(cc_recipients);
+                            var cc_arr = std.json.Array.initCapacity(allocator, cc_recipients.len) catch continue;
+                            for (cc_recipients) |r| {
+                                var email_obj = std.json.ObjectMap.init(allocator);
+                                email_obj.put("address", .{ .string = r.emailAddress.address }) catch continue;
+                                var recip_obj = std.json.ObjectMap.init(allocator);
+                                recip_obj.put("emailAddress", .{ .object = email_obj }) catch continue;
+                                cc_arr.appendAssumeCapacity(.{ .object = recip_obj });
+                            }
+                            patch_obj.put("ccRecipients", .{ .array = cc_arr }) catch continue;
+                        }
+
+                        // Optional bccRecipients update.
+                        if (parseRecipients(allocator, args, "bcc") catch continue) |bcc_recipients| {
+                            defer allocator.free(bcc_recipients);
+                            var bcc_arr = std.json.Array.initCapacity(allocator, bcc_recipients.len) catch continue;
+                            for (bcc_recipients) |r| {
+                                var email_obj = std.json.ObjectMap.init(allocator);
+                                email_obj.put("address", .{ .string = r.emailAddress.address }) catch continue;
+                                var recip_obj = std.json.ObjectMap.init(allocator);
+                                recip_obj.put("emailAddress", .{ .object = email_obj }) catch continue;
+                                bcc_arr.appendAssumeCapacity(.{ .object = recip_obj });
+                            }
+                            patch_obj.put("bccRecipients", .{ .array = bcc_arr }) catch continue;
+                        }
+
+                        // Serialize the patch object to JSON.
+                        var json_buf: std.Io.Writer.Allocating = .init(allocator);
+                        defer json_buf.deinit();
+                        const patch_val = std.json.Value{ .object = patch_obj };
+                        std.json.Stringify.value(patch_val, .{}, &json_buf.writer) catch continue;
+                        const json_body = json_buf.written();
+
+                        // PATCH /me/messages/{id}
+                        const path = std.fmt.allocPrint(allocator, "/me/messages/{s}", .{draft_id}) catch continue;
+                        defer allocator.free(path);
+
+                        _ = graph.patch(allocator, io, token, path, json_body) catch |err| {
+                            std.debug.print("ms-mcp: update-draft failed: {}\n", .{err});
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Failed to update draft." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        const content: []const types.TextContent = &.{
+                            .{ .text = "Draft updated successfully." },
+                        };
+                        const result = types.ToolCallResult{ .content = content };
+                        sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                            .id = getRequestId(parsed.value),
+                            .result = result,
+                        });
+                    } else if (std.mem.eql(u8, name, "delete-draft")) {
+                        // Delete a draft email.
+                        const token = requireAuth(&state, allocator, io, client_id, tenant_id, writer, getRequestId(parsed.value)) orelse continue;
+
+                        const args = getToolArgs(parsed.value) orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing arguments. Provide draftId." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        const draft_id = getStringArg(args, "draftId") orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing 'draftId' argument." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        // DELETE /me/messages/{id}
+                        const path = std.fmt.allocPrint(allocator, "/me/messages/{s}", .{draft_id}) catch continue;
+                        defer allocator.free(path);
+
+                        graph.delete(allocator, io, token, path) catch |err| {
+                            std.debug.print("ms-mcp: delete-draft failed: {}\n", .{err});
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Failed to delete draft." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        const content: []const types.TextContent = &.{
+                            .{ .text = "Draft deleted successfully." },
+                        };
+                        const result = types.ToolCallResult{ .content = content };
+                        sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                            .id = getRequestId(parsed.value),
+                            .result = result,
+                        });
+                    } else if (std.mem.eql(u8, name, "add-attachment")) {
+                        // Add a file attachment to a draft email.
+                        // Reads the file from disk and base64-encodes it server-side
+                        // so the LLM doesn't have to pass huge base64 strings.
+                        const token = requireAuth(&state, allocator, io, client_id, tenant_id, writer, getRequestId(parsed.value)) orelse continue;
+
+                        const args = getToolArgs(parsed.value) orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing arguments. Provide draftId and filePath." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        const draft_id = getStringArg(args, "draftId") orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing 'draftId' argument." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+                        const file_path = getStringArg(args, "filePath") orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing 'filePath' argument (absolute path to the file)." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        // Read the file from disk (up to 10 MB).
+                        const file_data = std.Io.Dir.readFileAlloc(.cwd(), io, file_path, allocator, .unlimited) catch |err| {
+                            std.debug.print("ms-mcp: add-attachment read file failed: {}\n", .{err});
+                            const err_msg = std.fmt.allocPrint(allocator, "Failed to read file: {s}", .{file_path}) catch continue;
+                            defer allocator.free(err_msg);
+                            const content: []const types.TextContent = &.{
+                                .{ .text = err_msg },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+                        defer allocator.free(file_data);
+
+                        // Base64-encode the file contents.
+                        const b64_encoded = std.base64.standard.Encoder.encode(
+                            allocator.alloc(u8, std.base64.standard.Encoder.calcSize(file_data.len)) catch continue,
+                            file_data,
+                        );
+                        defer allocator.free(b64_encoded);
+
+                        // Derive the filename from the path (everything after the last /).
+                        // Use the "name" arg if provided, otherwise extract from filePath.
+                        const file_name = getStringArg(args, "name") orelse blk: {
+                            const path_slice = file_path;
+                            if (std.mem.lastIndexOfScalar(u8, path_slice, '/')) |idx| {
+                                break :blk path_slice[idx + 1 ..];
+                            }
+                            break :blk path_slice;
+                        };
+
+                        // Infer MIME type from extension if not provided.
+                        const content_type = getStringArg(args, "contentType") orelse blk: {
+                            const ext = std.fs.path.extension(file_path);
+                            if (std.mem.eql(u8, ext, ".png")) break :blk "image/png";
+                            if (std.mem.eql(u8, ext, ".jpg") or std.mem.eql(u8, ext, ".jpeg")) break :blk "image/jpeg";
+                            if (std.mem.eql(u8, ext, ".gif")) break :blk "image/gif";
+                            if (std.mem.eql(u8, ext, ".pdf")) break :blk "application/pdf";
+                            if (std.mem.eql(u8, ext, ".doc")) break :blk "application/msword";
+                            if (std.mem.eql(u8, ext, ".docx")) break :blk "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+                            if (std.mem.eql(u8, ext, ".xls")) break :blk "application/vnd.ms-excel";
+                            if (std.mem.eql(u8, ext, ".xlsx")) break :blk "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+                            if (std.mem.eql(u8, ext, ".ppt")) break :blk "application/vnd.ms-powerpoint";
+                            if (std.mem.eql(u8, ext, ".pptx")) break :blk "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+                            if (std.mem.eql(u8, ext, ".txt")) break :blk "text/plain";
+                            if (std.mem.eql(u8, ext, ".csv")) break :blk "text/csv";
+                            if (std.mem.eql(u8, ext, ".html") or std.mem.eql(u8, ext, ".htm")) break :blk "text/html";
+                            if (std.mem.eql(u8, ext, ".zip")) break :blk "application/zip";
+                            if (std.mem.eql(u8, ext, ".svg")) break :blk "image/svg+xml";
+                            if (std.mem.eql(u8, ext, ".webp")) break :blk "image/webp";
+                            break :blk "application/octet-stream";
+                        };
+
+                        // Check for inline attachment options.
+                        // isInline=true marks the attachment as embedded in the HTML body.
+                        // contentId is the CID referenced by <img src="cid:..."> in the body.
+                        const is_inline = if (args.get("isInline")) |v| switch (v) {
+                            .bool => |b| b,
+                            else => false,
+                        } else false;
+                        const content_id = getStringArg(args, "contentId");
+
+                        // Build the attachment JSON payload.
+                        // Graph API expects @odata.type for file attachments.
+                        var attach_obj = std.json.ObjectMap.init(allocator);
+                        defer attach_obj.deinit();
+                        attach_obj.put("@odata.type", .{ .string = "#microsoft.graph.fileAttachment" }) catch continue;
+                        attach_obj.put("name", .{ .string = file_name }) catch continue;
+                        attach_obj.put("contentType", .{ .string = content_type }) catch continue;
+                        attach_obj.put("contentBytes", .{ .string = b64_encoded }) catch continue;
+                        if (is_inline) {
+                            attach_obj.put("isInline", .{ .bool = true }) catch continue;
+                            if (content_id) |cid| {
+                                attach_obj.put("contentId", .{ .string = cid }) catch continue;
+                            }
+                        }
+
+                        var json_buf: std.Io.Writer.Allocating = .init(allocator);
+                        defer json_buf.deinit();
+                        const attach_val = std.json.Value{ .object = attach_obj };
+                        std.json.Stringify.value(attach_val, .{}, &json_buf.writer) catch continue;
+                        const json_body = json_buf.written();
+
+                        // POST /me/messages/{id}/attachments
+                        const path = std.fmt.allocPrint(allocator, "/me/messages/{s}/attachments", .{draft_id}) catch continue;
+                        defer allocator.free(path);
+
+                        const response = graph.post(allocator, io, token, path, json_body) catch |err| {
+                            std.debug.print("ms-mcp: add-attachment failed: {}\n", .{err});
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Failed to add attachment." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+                        defer allocator.free(response);
+
+                        // Parse response to get attachment ID.
+                        const attach_parsed = std.json.parseFromSlice(std.json.Value, allocator, response, .{}) catch {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Attachment added but could not parse response." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+                        defer attach_parsed.deinit();
+
+                        const attach_id = if (attach_parsed.value.object.get("id")) |id_val| switch (id_val) {
+                            .string => |s| s,
+                            else => "(unknown)",
+                        } else "(unknown)";
+
+                        const msg = std.fmt.allocPrint(allocator, "Attachment '{s}' added. Attachment ID: {s}", .{ file_name, attach_id }) catch continue;
+                        defer allocator.free(msg);
+
+                        const content: []const types.TextContent = &.{
+                            .{ .text = msg },
+                        };
+                        const result = types.ToolCallResult{ .content = content };
+                        sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                            .id = getRequestId(parsed.value),
+                            .result = result,
+                        });
+                    } else if (std.mem.eql(u8, name, "list-attachments")) {
+                        // List attachments on a draft email.
+                        const token = requireAuth(&state, allocator, io, client_id, tenant_id, writer, getRequestId(parsed.value)) orelse continue;
+
+                        const args = getToolArgs(parsed.value) orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing arguments. Provide draftId." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        const draft_id = getStringArg(args, "draftId") orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing 'draftId' argument." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        // GET /me/messages/{id}/attachments
+                        const path = std.fmt.allocPrint(allocator, "/me/messages/{s}/attachments", .{draft_id}) catch continue;
+                        defer allocator.free(path);
+
+                        const response_body = graph.get(allocator, io, token, path) catch |err| {
+                            std.debug.print("ms-mcp: list-attachments failed: {}\n", .{err});
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Failed to list attachments." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+                        defer allocator.free(response_body);
+
+                        // Return the raw JSON — the LLM will summarize it.
+                        const content: []const types.TextContent = &.{
+                            .{ .text = response_body },
+                        };
+                        const result = types.ToolCallResult{ .content = content };
+                        sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                            .id = getRequestId(parsed.value),
+                            .result = result,
+                        });
+                    } else if (std.mem.eql(u8, name, "remove-attachment")) {
+                        // Remove an attachment from a draft email.
+                        const token = requireAuth(&state, allocator, io, client_id, tenant_id, writer, getRequestId(parsed.value)) orelse continue;
+
+                        const args = getToolArgs(parsed.value) orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing arguments. Provide draftId and attachmentId." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        const draft_id = getStringArg(args, "draftId") orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing 'draftId' argument." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+                        const attachment_id = getStringArg(args, "attachmentId") orelse {
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Missing 'attachmentId' argument. Use list-attachments to find IDs." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        // DELETE /me/messages/{id}/attachments/{attachmentId}
+                        const path = std.fmt.allocPrint(allocator, "/me/messages/{s}/attachments/{s}", .{ draft_id, attachment_id }) catch continue;
+                        defer allocator.free(path);
+
+                        graph.delete(allocator, io, token, path) catch |err| {
+                            std.debug.print("ms-mcp: remove-attachment failed: {}\n", .{err});
+                            const content: []const types.TextContent = &.{
+                                .{ .text = "Failed to remove attachment." },
+                            };
+                            const result = types.ToolCallResult{ .content = content };
+                            sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                                .id = getRequestId(parsed.value),
+                                .result = result,
+                            });
+                            continue;
+                        };
+
+                        const content: []const types.TextContent = &.{
+                            .{ .text = "Attachment removed successfully." },
+                        };
+                        const result = types.ToolCallResult{ .content = content };
+                        sendJsonResponse(writer, types.JsonRpcResponse(types.ToolCallResult){
+                            .id = getRequestId(parsed.value),
+                            .result = result,
+                        });
                     } else if (std.mem.eql(u8, name, "list-chat-messages")) {
                         // Check that the user is logged in.
                         const token = requireAuth(&state, allocator, io, client_id, tenant_id, writer, getRequestId(parsed.value)) orelse continue;
@@ -2030,6 +2687,47 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                 send_email_props.put("cc", schemaProperty("array", "Optional array of CC email addresses")) catch continue;
                 send_email_props.put("bcc", schemaProperty("array", "Optional array of BCC email addresses")) catch continue;
 
+                // --- send-draft schema ---
+                var send_draft_props = std.json.ObjectMap.init(allocator);
+                defer send_draft_props.deinit();
+                send_draft_props.put("draftId", schemaProperty("string", "The ID of the draft to send (from create-draft)")) catch continue;
+
+                // --- update-draft schema ---
+                var update_draft_props = std.json.ObjectMap.init(allocator);
+                defer update_draft_props.deinit();
+                update_draft_props.put("draftId", schemaProperty("string", "The ID of the draft to update (from create-draft)")) catch continue;
+                update_draft_props.put("subject", schemaProperty("string", "New email subject line")) catch continue;
+                update_draft_props.put("body", schemaProperty("string", "New email body text")) catch continue;
+                update_draft_props.put("to", schemaProperty("array", "New array of recipient email addresses")) catch continue;
+                update_draft_props.put("cc", schemaProperty("array", "New array of CC email addresses")) catch continue;
+                update_draft_props.put("bcc", schemaProperty("array", "New array of BCC email addresses")) catch continue;
+
+                // --- delete-draft schema ---
+                var delete_draft_props = std.json.ObjectMap.init(allocator);
+                defer delete_draft_props.deinit();
+                delete_draft_props.put("draftId", schemaProperty("string", "The ID of the draft to delete (from create-draft)")) catch continue;
+
+                // --- add-attachment schema ---
+                var add_attach_props = std.json.ObjectMap.init(allocator);
+                defer add_attach_props.deinit();
+                add_attach_props.put("draftId", schemaProperty("string", "The ID of the draft to attach to (from create-draft)")) catch continue;
+                add_attach_props.put("filePath", schemaProperty("string", "Absolute path to the file on disk (e.g. '/Users/casey/report.pdf')")) catch continue;
+                add_attach_props.put("name", schemaProperty("string", "Optional display name override (defaults to filename from path)")) catch continue;
+                add_attach_props.put("contentType", schemaProperty("string", "Optional MIME type override (auto-detected from file extension)")) catch continue;
+                add_attach_props.put("isInline", schemaProperty("boolean", "Set to true for inline/embedded images referenced in HTML body via cid:")) catch continue;
+                add_attach_props.put("contentId", schemaProperty("string", "Content ID for inline images — referenced in HTML body as <img src=\"cid:THIS_VALUE\">")) catch continue;
+
+                // --- list-attachments schema ---
+                var list_attach_props = std.json.ObjectMap.init(allocator);
+                defer list_attach_props.deinit();
+                list_attach_props.put("draftId", schemaProperty("string", "The ID of the draft to list attachments for")) catch continue;
+
+                // --- remove-attachment schema ---
+                var remove_attach_props = std.json.ObjectMap.init(allocator);
+                defer remove_attach_props.deinit();
+                remove_attach_props.put("draftId", schemaProperty("string", "The ID of the draft containing the attachment")) catch continue;
+                remove_attach_props.put("attachmentId", schemaProperty("string", "The ID of the attachment to remove (from list-attachments)")) catch continue;
+
                 // --- list-chat-messages schema ---
                 var chat_msgs_props = std.json.ObjectMap.init(allocator);
                 defer chat_msgs_props.deinit();
@@ -2139,6 +2837,41 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                         .name = "send-email",
                         .description = "Send an email via Microsoft 365 Outlook. Supports multiple recipients, CC, and BCC.",
                         .inputSchema = buildSchema(send_email_props, &.{ "to", "subject", "body" }),
+                    },
+                    .{
+                        .name = "create-draft",
+                        .description = "Create a draft email in Microsoft 365 Outlook. Saves to Drafts folder without sending. Supports multiple recipients, CC, and BCC.",
+                        .inputSchema = buildSchema(send_email_props, &.{ "to", "subject", "body" }),
+                    },
+                    .{
+                        .name = "send-draft",
+                        .description = "Send a previously created draft email by its ID.",
+                        .inputSchema = buildSchema(send_draft_props, &.{"draftId"}),
+                    },
+                    .{
+                        .name = "update-draft",
+                        .description = "Update a draft email. Only provide the fields you want to change (subject, body, to, cc, bcc).",
+                        .inputSchema = buildSchema(update_draft_props, &.{"draftId"}),
+                    },
+                    .{
+                        .name = "delete-draft",
+                        .description = "Delete a draft email by its ID.",
+                        .inputSchema = buildSchema(delete_draft_props, &.{"draftId"}),
+                    },
+                    .{
+                        .name = "add-attachment",
+                        .description = "Add a file attachment to a draft email. Reads the file from disk — just provide the file path. Name and MIME type are auto-detected.",
+                        .inputSchema = buildSchema(add_attach_props, &.{ "draftId", "filePath" }),
+                    },
+                    .{
+                        .name = "list-attachments",
+                        .description = "List attachments on a draft email. Returns attachment IDs, names, and sizes.",
+                        .inputSchema = buildSchema(list_attach_props, &.{"draftId"}),
+                    },
+                    .{
+                        .name = "remove-attachment",
+                        .description = "Remove an attachment from a draft email by its attachment ID.",
+                        .inputSchema = buildSchema(remove_attach_props, &.{ "draftId", "attachmentId" }),
                     },
                     // --- Teams Chat ---
                     .{
