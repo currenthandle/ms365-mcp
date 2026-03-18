@@ -12,6 +12,7 @@ const email_tools = @import("tools/email.zig");
 const draft_tools = @import("tools/drafts.zig");
 const calendar_tools = @import("tools/calendar.zig");
 const chat_tools = @import("tools/chat.zig");
+const channel_tools = @import("tools/channels.zig");
 const user_tools = @import("tools/users.zig");
 const ToolContext = @import("tools/context.zig").ToolContext;
 
@@ -217,6 +218,14 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                         calendar_tools.handleListCalendarEvents(ctx);
                     } else if (std.mem.eql(u8, name, "create-chat")) {
                         chat_tools.handleCreateChat(ctx);
+
+                        // --- Teams channel tools ---
+                    } else if (std.mem.eql(u8, name, "list-teams")) {
+                        channel_tools.handleListTeams(ctx);
+                    } else if (std.mem.eql(u8, name, "list-channels")) {
+                        channel_tools.handleListChannels(ctx);
+                    } else if (std.mem.eql(u8, name, "list-channel-messages")) {
+                        channel_tools.handleListChannelMessages(ctx);
                     }
                 }
             } else if (std.mem.eql(u8, m, "tools/list")) {

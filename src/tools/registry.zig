@@ -65,6 +65,15 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
     create_chat_props.put("emailOne", schema.schemaProperty("string", "First member's email address (use search-users to find it)")) catch return null;
     create_chat_props.put("emailTwo", schema.schemaProperty("string", "Second member's email address")) catch return null;
 
+    // --- list-channels schema ---
+    var list_channels_props = std.json.ObjectMap.init(allocator);
+    list_channels_props.put("teamId", schema.schemaProperty("string", "The ID of the team (from list-teams)")) catch return null;
+
+    // --- list-channel-messages schema ---
+    var list_chan_msgs_props = std.json.ObjectMap.init(allocator);
+    list_chan_msgs_props.put("teamId", schema.schemaProperty("string", "The ID of the team (from list-teams)")) catch return null;
+    list_chan_msgs_props.put("channelId", schema.schemaProperty("string", "The ID of the channel (from list-channels)")) catch return null;
+
     // --- update-calendar-event schema ---
     var cal_update_props = std.json.ObjectMap.init(allocator);
     cal_update_props.put("eventId", schema.schemaProperty("string", "The ID of the event to update (from list-calendar-events)")) catch return null;
@@ -214,6 +223,22 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
             .name = "create-chat",
             .description = "Create or find an existing 1:1 Microsoft Teams chat between two users by email address.",
             .inputSchema = schema.buildSchema(create_chat_props, &.{ "emailOne", "emailTwo" }),
+        },
+        // --- Teams Channels ---
+        .{
+            .name = "list-teams",
+            .description = "List Microsoft Teams teams you are a member of. Returns team names and IDs. Use this to find a team before listing its channels.",
+            .inputSchema = schema.emptySchema(),
+        },
+        .{
+            .name = "list-channels",
+            .description = "List channels in a Microsoft Teams team. Returns channel names and IDs. Use list-teams first to get the teamId.",
+            .inputSchema = schema.buildSchema(list_channels_props, &.{"teamId"}),
+        },
+        .{
+            .name = "list-channel-messages",
+            .description = "List recent messages (posts) in a Microsoft Teams channel. These are channel conversations, not 1:1 chats. Use list-teams then list-channels to get the IDs.",
+            .inputSchema = schema.buildSchema(list_chan_msgs_props, &.{ "teamId", "channelId" }),
         },
         // --- Utility ---
         .{
