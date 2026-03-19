@@ -106,15 +106,55 @@ pub const CreateEventRequest = struct {
     };
 };
 
-/// Microsoft Graph API request body for POST /me/chats/{chatId}/messages.
-/// Simple structure: {"body": {"content": "message text"}}
+/// Microsoft Graph API request body for POST /me/chats/{chatId}/messages
+/// and POST /teams/{teamId}/channels/{channelId}/messages/{messageId}/replies.
+/// Uses HTML contentType by default so URLs render as clickable hyperlinks.
 pub const ChatMessageRequest = struct {
     body: Body,
 
     pub const Body = struct {
+        contentType: []const u8 = "html",
         content: []const u8,
     };
 };
+
+/// Convert plain text to HTML suitable for Teams/chat messages.
+/// Wraps bare URLs (http:// and https://) in <a> tags so they render
+/// as clickable hyperlinks, and converts newlines to <br> tags.
+pub fn htmlAutoLink(allocator: std.mem.Allocator, text: []const u8) ?[]u8 {
+    var buf: std.Io.Writer.Allocating = .init(allocator);
+    const w = &buf.writer;
+
+    var i: usize = 0;
+    while (i < text.len) {
+        // Check for newline — convert to <br>.
+        if (text[i] == '\n') {
+            w.writeAll("<br>") catch return null;
+            i += 1;
+            continue;
+        }
+
+        // Check for URL start: "http://" or "https://"
+        if (std.mem.startsWith(u8, text[i..], "https://") or
+            std.mem.startsWith(u8, text[i..], "http://"))
+        {
+            // Find the end of the URL — stop at whitespace, or end of string.
+            const url_start = i;
+            while (i < text.len and text[i] != ' ' and text[i] != '\t' and
+                text[i] != '\n' and text[i] != '\r') : (i += 1)
+            {}
+            const url = text[url_start..i];
+            w.print("<a href=\"{s}\">{s}</a>", .{ url, url }) catch return null;
+            continue;
+        }
+
+        // Regular character — pass through.
+        w.writeByte(text[i]) catch return null;
+        i += 1;
+    }
+
+    return buf.toOwnedSlice() catch null;
+}
 
 /// Microsoft Graph API request body for POST /me/sendMail.
 /// Nested structs mirror the JSON shape Microsoft expects:

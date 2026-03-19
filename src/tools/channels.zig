@@ -311,7 +311,7 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
         var remaining = message;
         while (remaining.len > 0) {
             if (std.mem.indexOfScalar(u8, remaining, '@')) |at_pos| {
-                hw.writeAll(remaining[0..at_pos]) catch return;
+                writeHtmlLinked(hw, remaining[0..at_pos]);
                 const after_at = remaining[at_pos + 1 ..];
 
                 var matched = false;
@@ -346,7 +346,7 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
                     remaining = after_at;
                 }
             } else {
-                hw.writeAll(remaining) catch return;
+                writeHtmlLinked(hw, remaining);
                 break;
             }
         }
@@ -360,9 +360,10 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
         w.writeAll(mentions_json_buf.written()) catch return;
         w.writeAll("}") catch return;
     } else {
-        // No mentions — simple plain-text body.
+        // No mentions — send as HTML so URLs become clickable hyperlinks.
+        const html_content = types.htmlAutoLink(ctx.allocator, message) orelse message;
         const body = types.ChatMessageRequest{
-            .body = .{ .content = message },
+            .body = .{ .content = html_content },
         };
         std.json.Stringify.value(body, .{}, w) catch return;
     }
@@ -380,6 +381,32 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
 // ---------------------------------------------------------------
 // Helpers — reduce boilerplate for common response patterns.
 // ---------------------------------------------------------------
+
+/// Write a text segment as HTML, converting newlines to <br> and
+/// wrapping bare http/https URLs in <a> tags.
+fn writeHtmlLinked(hw: anytype, text: []const u8) void {
+    var i: usize = 0;
+    while (i < text.len) {
+        if (text[i] == '\n') {
+            hw.writeAll("<br>") catch return;
+            i += 1;
+            continue;
+        }
+        if (std.mem.startsWith(u8, text[i..], "https://") or
+            std.mem.startsWith(u8, text[i..], "http://"))
+        {
+            const url_start = i;
+            while (i < text.len and text[i] != ' ' and text[i] != '\t' and
+                text[i] != '\n' and text[i] != '\r') : (i += 1)
+            {}
+            const url = text[url_start..i];
+            hw.print("<a href=\"{s}\">{s}</a>", .{ url, url }) catch return;
+            continue;
+        }
+        hw.writeByte(text[i]) catch return;
+        i += 1;
+    }
+}
 
 /// Extract the "value" array from a Graph API response object.
 fn getValueArray(value: std.json.Value) ?[]std.json.Value {
