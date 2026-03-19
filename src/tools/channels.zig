@@ -166,6 +166,46 @@ pub fn handleListChannelMessages(ctx: ToolContext) void {
     sendToolResult(ctx, response_body);
 }
 
+/// Get replies to a specific message (thread) in a Teams channel.
+/// Calls GET /teams/{teamId}/channels/{channelId}/messages/{messageId}/replies.
+pub fn handleGetChannelMessageReplies(ctx: ToolContext) void {
+    const token = state_mod.requireAuth(ctx.state, ctx.allocator, ctx.io, ctx.client_id, ctx.tenant_id, ctx.writer, json_rpc.getRequestId(ctx.parsed)) orelse return;
+
+    const args = json_rpc.getToolArgs(ctx.parsed) orelse {
+        sendToolError(ctx, "Missing arguments. Provide teamId, channelId, and messageId.");
+        return;
+    };
+    const team_id = json_rpc.getStringArg(args, "teamId") orelse {
+        sendToolError(ctx, "Missing 'teamId' argument.");
+        return;
+    };
+    const channel_id = json_rpc.getStringArg(args, "channelId") orelse {
+        sendToolError(ctx, "Missing 'channelId' argument.");
+        return;
+    };
+    const message_id = json_rpc.getStringArg(args, "messageId") orelse {
+        sendToolError(ctx, "Missing 'messageId' argument. Use list-channel-messages to find it.");
+        return;
+    };
+
+    const path = std.fmt.allocPrint(
+        ctx.allocator,
+        "/teams/{s}/channels/{s}/messages/{s}/replies?$top=50",
+        .{ team_id, channel_id, message_id },
+    ) catch return;
+    defer ctx.allocator.free(path);
+
+    const response_body = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        std.debug.print("ms-mcp: get-channel-message-replies failed: {}\n", .{err});
+        sendToolError(ctx, "Failed to fetch message replies.");
+        return;
+    };
+    defer ctx.allocator.free(response_body);
+
+    // Return raw JSON — the LLM will summarize it.
+    sendToolResult(ctx, response_body);
+}
+
 // ---------------------------------------------------------------
 // Helpers — reduce boilerplate for common response patterns.
 // ---------------------------------------------------------------

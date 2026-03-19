@@ -226,6 +226,8 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                         channel_tools.handleListChannels(ctx);
                     } else if (std.mem.eql(u8, name, "list-channel-messages")) {
                         channel_tools.handleListChannelMessages(ctx);
+                    } else if (std.mem.eql(u8, name, "get-channel-message-replies")) {
+                        channel_tools.handleGetChannelMessageReplies(ctx);
                     }
                 }
             } else if (std.mem.eql(u8, m, "tools/list")) {

@@ -74,6 +74,12 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
     list_chan_msgs_props.put("teamId", schema.schemaProperty("string", "The ID of the team (from list-teams)")) catch return null;
     list_chan_msgs_props.put("channelId", schema.schemaProperty("string", "The ID of the channel (from list-channels)")) catch return null;
 
+    // --- get-channel-message-replies schema ---
+    var chan_replies_props = std.json.ObjectMap.init(allocator);
+    chan_replies_props.put("teamId", schema.schemaProperty("string", "The ID of the team (from list-teams)")) catch return null;
+    chan_replies_props.put("channelId", schema.schemaProperty("string", "The ID of the channel (from list-channels)")) catch return null;
+    chan_replies_props.put("messageId", schema.schemaProperty("string", "The ID of the top-level message/post (from list-channel-messages)")) catch return null;
+
     // --- update-calendar-event schema ---
     var cal_update_props = std.json.ObjectMap.init(allocator);
     cal_update_props.put("eventId", schema.schemaProperty("string", "The ID of the event to update (from list-calendar-events)")) catch return null;
@@ -237,8 +243,13 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
         },
         .{
             .name = "list-channel-messages",
-            .description = "List recent messages (posts) in a Microsoft Teams channel. These are channel conversations, not 1:1 chats. Use list-teams then list-channels to get the IDs.",
+            .description = "List recent messages (posts) in a Microsoft Teams channel. These are channel conversations, not 1:1 chats. Use list-teams then list-channels to get the IDs. Each message has an 'id' field you can use with get-channel-message-replies to read the thread.",
             .inputSchema = schema.buildSchema(list_chan_msgs_props, &.{ "teamId", "channelId" }),
+        },
+        .{
+            .name = "get-channel-message-replies",
+            .description = "Get replies to a specific message thread in a Microsoft Teams channel. Use list-channel-messages first to find the messageId of the post you want replies for.",
+            .inputSchema = schema.buildSchema(chan_replies_props, &.{ "teamId", "channelId", "messageId" }),
         },
         // --- Utility ---
         .{

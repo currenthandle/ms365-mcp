@@ -1,8 +1,4 @@
 // auth.zig — OAuth 2.0 Device Code Flow for Microsoft 365.
-//
-// Microsoft's device code flow works in two phases:
-// 1. Request a device code — we get back a short code + URL for the user
-// 2. Poll for a token — we keep asking "did they log in yet?" until they do
 
 const std = @import("std");
 const http = @import("http.zig");
@@ -22,6 +18,9 @@ const scopes =
     "Chat.Read " ++
     "Chat.ReadWrite " ++
     "ChatMessage.Send " ++
+    "Team.ReadBasic.All " ++
+    "Channel.ReadBasic.All " ++
+    "ChannelMessage.Read.All " ++
     "offline_access";
 
 /// What Microsoft sends back when we request a device code.
