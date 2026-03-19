@@ -208,6 +208,7 @@ pub fn handleGetChannelMessageReplies(ctx: ToolContext) void {
 
 /// Reply to a message thread in a Teams channel.
 /// Calls POST /teams/{teamId}/channels/{channelId}/messages/{messageId}/replies.
+/// Supports optional @mentions via the "mentions" parameter.
 pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
     const token = state_mod.requireAuth(ctx.state, ctx.allocator, ctx.io, ctx.client_id, ctx.tenant_id, ctx.writer, json_rpc.getRequestId(ctx.parsed)) orelse return;
 
@@ -232,6 +233,12 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
         return;
     };
 
+    // Optional mentions — format: "DisplayName|userId,DisplayName2|userId2"
+    // Each mention becomes an <at> tag in the HTML body and an entry in
+    // the mentions array. The userId is the Azure AD object ID, which you
+    // can find in the from.user.id field of channel message replies.
+    const mentions_str = json_rpc.getStringArg(args, "mentions");
+
     const path = std.fmt.allocPrint(
         ctx.allocator,
         "/teams/{s}/channels/{s}/messages/{s}/replies",
@@ -239,19 +246,133 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
     ) catch return;
     defer ctx.allocator.free(path);
 
-    // Build the JSON body — same shape as chat messages.
-    const body = types.ChatMessageRequest{
-        .body = .{ .content = message },
-    };
+    // Build the JSON body manually to support the mentions array.
+    // We construct the HTML body by replacing @DisplayName with <at> tags,
+    // and build the mentions metadata array for the Graph API.
     var json_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
     defer json_buf.deinit();
-    std.json.Stringify.value(body, .{}, &json_buf.writer) catch return;
+    const w = &json_buf.writer;
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, json_buf.written()) catch |err| {
+    if (mentions_str) |mentions_raw| {
+        // Build HTML body: replace @Name with <at id="N">Name</at>
+        // and construct the mentions array.
+        var html_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
+        defer html_buf.deinit();
+        var mentions_json_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
+        defer mentions_json_buf.deinit();
+        const mw = &mentions_json_buf.writer;
+
+        // Start with the original message text as HTML.
+        // We'll copy it, replacing @Name patterns with <at> tags.
+        var html_content = message;
+        _ = &html_content;
+
+        // Parse "Name|id,Name2|id2" pairs and build mentions.
+        mw.writeAll("[") catch return;
+        var mention_idx: usize = 0;
+        var iter = std.mem.splitScalar(u8, mentions_raw, ',');
+        // First pass: build mentions JSON and collect names for replacement.
+        // Store mention data for HTML replacement.
+        const MentionInfo = struct { name: []const u8, id: []const u8, idx: usize };
+        var mention_infos: [16]MentionInfo = undefined;
+        var mention_count: usize = 0;
+
+        while (iter.next()) |pair| {
+            const trimmed = std.mem.trim(u8, pair, " ");
+            if (trimmed.len == 0) continue;
+
+            // Split on '|' — "DisplayName|userId"
+            if (std.mem.indexOfScalar(u8, trimmed, '|')) |sep| {
+                const name = trimmed[0..sep];
+                const user_id = trimmed[sep + 1 ..];
+                if (name.len == 0 or user_id.len == 0) continue;
+
+                if (mention_idx > 0) mw.writeAll(",") catch return;
+
+                // Build mention JSON object.
+                mw.print(
+                    \\{{"id":{d},"mentionText":"{s}","mentioned":{{"user":{{"id":"{s}","displayName":"{s}","userIdentityType":"aadUser"}}}}}}
+                , .{ mention_idx, name, user_id, name }) catch return;
+
+                if (mention_count < 16) {
+                    mention_infos[mention_count] = .{ .name = name, .id = user_id, .idx = mention_idx };
+                    mention_count += 1;
+                }
+                mention_idx += 1;
+            }
+        }
+        mw.writeAll("]") catch return;
+
+        // Build HTML body: replace @Name with <at id="N">DisplayName</at>.
+        // We match @-prefixed text against both the full display name and
+        // the first name (everything before the first space), so "@Rohit"
+        // matches "Rohit Sureka".
+        const hw = &html_buf.writer;
+        var remaining = message;
+        while (remaining.len > 0) {
+            if (std.mem.indexOfScalar(u8, remaining, '@')) |at_pos| {
+                hw.writeAll(remaining[0..at_pos]) catch return;
+                const after_at = remaining[at_pos + 1 ..];
+
+                var matched = false;
+                for (mention_infos[0..mention_count]) |info| {
+                    // Try matching full display name first, then first name.
+                    const first_name_len = std.mem.indexOfScalar(u8, info.name, ' ') orelse info.name.len;
+                    const first_name = info.name[0..first_name_len];
+
+                    if (std.mem.startsWith(u8, after_at, info.name)) {
+                        // Full name match: "@Rohit Sureka" → <at>Rohit Sureka</at>
+                        hw.print("<at id=\"{d}\">{s}</at>", .{ info.idx, info.name }) catch return;
+                        remaining = after_at[info.name.len..];
+                        matched = true;
+                        break;
+                    } else if (std.mem.startsWith(u8, after_at, first_name)) {
+                        // First name match: "@Rohit" → <at>Rohit Sureka</at>
+                        // Check that the next char after the name isn't a letter
+                        // (so "@Rohits" doesn't match).
+                        const end = first_name.len;
+                        if (end < after_at.len and std.ascii.isAlphabetic(after_at[end])) {
+                            // Not a word boundary — skip.
+                        } else {
+                            hw.print("<at id=\"{d}\">{s}</at>", .{ info.idx, info.name }) catch return;
+                            remaining = after_at[first_name.len..];
+                            matched = true;
+                            break;
+                        }
+                    }
+                }
+                if (!matched) {
+                    hw.writeAll("@") catch return;
+                    remaining = after_at;
+                }
+            } else {
+                hw.writeAll(remaining) catch return;
+                break;
+            }
+        }
+
+        // Assemble the full JSON with HTML body and mentions.
+        // We use Stringify for the HTML content to properly escape quotes,
+        // then splice in the pre-built mentions array as raw JSON.
+        w.writeAll("{\"body\":{\"contentType\":\"html\",\"content\":") catch return;
+        std.json.Stringify.encodeJsonString(html_buf.written(), .{}, w) catch return;
+        w.writeAll("},\"mentions\":") catch return;
+        w.writeAll(mentions_json_buf.written()) catch return;
+        w.writeAll("}") catch return;
+    } else {
+        // No mentions — simple plain-text body.
+        const body = types.ChatMessageRequest{
+            .body = .{ .content = message },
+        };
+        std.json.Stringify.value(body, .{}, w) catch return;
+    }
+
+    const response_body = graph.post(ctx.allocator, ctx.io, token, path, json_buf.written()) catch |err| {
         std.debug.print("ms-mcp: reply-to-channel-message failed: {}\n", .{err});
         sendToolError(ctx, "Failed to send reply.");
         return;
     };
+    defer ctx.allocator.free(response_body);
 
     sendToolResult(ctx, "Reply sent.");
 }

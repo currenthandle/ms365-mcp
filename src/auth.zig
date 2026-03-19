@@ -21,6 +21,7 @@ const scopes =
     "Team.ReadBasic.All " ++
     "Channel.ReadBasic.All " ++
     "ChannelMessage.Read.All " ++
+    "ChannelMessage.Send " ++
     "offline_access";
 
 /// What Microsoft sends back when we request a device code.

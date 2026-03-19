@@ -85,7 +85,8 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
     chan_reply_props.put("teamId", schema.schemaProperty("string", "The ID of the team (from list-teams)")) catch return null;
     chan_reply_props.put("channelId", schema.schemaProperty("string", "The ID of the channel (from list-channels)")) catch return null;
     chan_reply_props.put("messageId", schema.schemaProperty("string", "The ID of the top-level message/post to reply to (from list-channel-messages)")) catch return null;
-    chan_reply_props.put("message", schema.schemaProperty("string", "The reply text to send")) catch return null;
+    chan_reply_props.put("message", schema.schemaProperty("string", "The reply text with @Name for each person to mention (e.g. 'Hey @Rohit check this out')")) catch return null;
+    chan_reply_props.put("mentions", schema.schemaProperty("string", "Optional comma-separated mention list: 'DisplayName|userId,Name2|userId2'. The userId is the Azure AD user ID found in from.user.id of channel messages. Each @Name in the message text will become a clickable Teams mention.")) catch return null;
 
     // --- update-calendar-event schema ---
     var cal_update_props = std.json.ObjectMap.init(allocator);
@@ -260,7 +261,7 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
         },
         .{
             .name = "reply-to-channel-message",
-            .description = "Reply to a message thread in a Microsoft Teams channel. Posts a reply under an existing channel message/post.",
+            .description = "Reply to a message thread in a Microsoft Teams channel. Supports @mentions — pass the mentions parameter with 'DisplayName|userId' pairs and use @Name in the message text. Get user IDs from the from.user.id field in channel message replies.",
             .inputSchema = schema.buildSchema(chan_reply_props, &.{ "teamId", "channelId", "messageId", "message" }),
         },
         // --- Utility ---
