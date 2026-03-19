@@ -1,8 +1,4 @@
 // http.zig — Thin wrapper around std.http.Client for making HTTPS requests.
-//
-// Both the OAuth auth flow and the Graph API need HTTP requests.
-// This module provides simple helpers so the callers don't have to
-// deal with the low-level Client setup each time.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

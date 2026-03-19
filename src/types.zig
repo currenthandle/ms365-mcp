@@ -1,8 +1,4 @@
 // types.zig — JSON-RPC and MCP protocol types.
-//
-// These structs mirror the JSON shapes the MCP protocol expects.
-// std.json.Stringify can automatically serialize any Zig struct to JSON,
-// so defining these types is all we need — no manual JSON building.
 
 const std = @import("std");
 

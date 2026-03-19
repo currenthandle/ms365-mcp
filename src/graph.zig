@@ -1,9 +1,4 @@
 // graph.zig — Microsoft Graph API client.
-//
-// All Graph API calls go to https://graph.microsoft.com/v1.0/...
-// Each request needs an Authorization: Bearer {access_token} header.
-// This module provides helpers so callers don't have to build URLs
-// or set headers manually.
 
 const std = @import("std");
 
