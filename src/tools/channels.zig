@@ -206,6 +206,56 @@ pub fn handleGetChannelMessageReplies(ctx: ToolContext) void {
     sendToolResult(ctx, response_body);
 }
 
+/// Reply to a message thread in a Teams channel.
+/// Calls POST /teams/{teamId}/channels/{channelId}/messages/{messageId}/replies.
+pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
+    const token = state_mod.requireAuth(ctx.state, ctx.allocator, ctx.io, ctx.client_id, ctx.tenant_id, ctx.writer, json_rpc.getRequestId(ctx.parsed)) orelse return;
+
+    const args = json_rpc.getToolArgs(ctx.parsed) orelse {
+        sendToolError(ctx, "Missing arguments. Provide teamId, channelId, messageId, and message.");
+        return;
+    };
+    const team_id = json_rpc.getStringArg(args, "teamId") orelse {
+        sendToolError(ctx, "Missing 'teamId' argument.");
+        return;
+    };
+    const channel_id = json_rpc.getStringArg(args, "channelId") orelse {
+        sendToolError(ctx, "Missing 'channelId' argument.");
+        return;
+    };
+    const message_id = json_rpc.getStringArg(args, "messageId") orelse {
+        sendToolError(ctx, "Missing 'messageId' argument.");
+        return;
+    };
+    const message = json_rpc.getStringArg(args, "message") orelse {
+        sendToolError(ctx, "Missing 'message' argument.");
+        return;
+    };
+
+    const path = std.fmt.allocPrint(
+        ctx.allocator,
+        "/teams/{s}/channels/{s}/messages/{s}/replies",
+        .{ team_id, channel_id, message_id },
+    ) catch return;
+    defer ctx.allocator.free(path);
+
+    // Build the JSON body — same shape as chat messages.
+    const body = types.ChatMessageRequest{
+        .body = .{ .content = message },
+    };
+    var json_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
+    defer json_buf.deinit();
+    std.json.Stringify.value(body, .{}, &json_buf.writer) catch return;
+
+    _ = graph.post(ctx.allocator, ctx.io, token, path, json_buf.written()) catch |err| {
+        std.debug.print("ms-mcp: reply-to-channel-message failed: {}\n", .{err});
+        sendToolError(ctx, "Failed to send reply.");
+        return;
+    };
+
+    sendToolResult(ctx, "Reply sent.");
+}
+
 // ---------------------------------------------------------------
 // Helpers — reduce boilerplate for common response patterns.
 // ---------------------------------------------------------------
