@@ -888,6 +888,8 @@ fn loadMcpConfig(allocator: Allocator, io: Io) !std.process.Environ.Map {
 }
 
 /// Load a .env file and set each KEY=VALUE as an environment variable.
+/// Uses a page allocator for the dupeZ strings since they must outlive
+/// the GPA (setenv holds pointers to them for the process lifetime).
 fn loadDotEnv(allocator: Allocator, io: Io) void {
     const data = std.Io.Dir.readFileAlloc(.cwd(), io, ".env", allocator, .unlimited) catch return;
     defer allocator.free(data);
@@ -898,11 +900,10 @@ fn loadDotEnv(allocator: Allocator, io: Io) void {
         const eq_idx = std.mem.indexOf(u8, line, "=") orelse continue;
         const key = line[0..eq_idx];
         const value = line[eq_idx + 1 ..];
-        // Dupe as null-terminated for setenv.
-        const key_z = allocator.dupeZ(u8, key) catch continue;
-        const val_z = allocator.dupeZ(u8, value) catch continue;
-        // Intentionally leaked — env vars must outlive the process.
-        _ = c.setenv(key_z.ptr, val_z.ptr, 0); // 0 = don't overwrite existing
+        // page_allocator because C setenv holds these pointers for the process lifetime.
+        const key_z = std.heap.page_allocator.dupeZ(u8, key) catch continue;
+        const val_z = std.heap.page_allocator.dupeZ(u8, value) catch continue;
+        _ = c.setenv(key_z.ptr, val_z.ptr, 0);
     }
 }
 
