@@ -55,4 +55,22 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
+
+    // Add a `zig build e2e` command that builds and runs end-to-end tests.
+    // This spawns the MCP server as a child process and tests the full
+    // JSON-RPC protocol against the live Microsoft Graph API.
+    const e2e_exe = b.addExecutable(.{
+        .name = "e2e",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/e2e.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(e2e_exe);
+
+    const e2e_cmd = b.addRunArtifact(e2e_exe);
+    e2e_cmd.step.dependOn(b.getInstallStep());
+    const e2e_step = b.step("e2e", "Run end-to-end tests against live Graph API");
+    e2e_step.dependOn(&e2e_cmd.step);
 }
