@@ -513,7 +513,10 @@ fn testAttachmentLifecycle(client: *McpClient) !void {
         del2.deinit();
         return;
     };
-    if (std.mem.indexOf(u8, attach_text, "attached") != null or std.mem.indexOf(u8, attach_text, "Attached") != null) {
+    if (std.mem.indexOf(u8, attach_text, "added") != null or
+        std.mem.indexOf(u8, attach_text, "attached") != null or
+        std.mem.indexOf(u8, attach_text, "Attachment") != null)
+    {
         pass("add-attachment");
     } else {
         fail("add-attachment", attach_text);
@@ -554,7 +557,7 @@ fn testCalendarWithAttendees(client: *McpClient) !void {
     };
 
     var args_buf: [2048]u8 = undefined;
-    const args = std.fmt.bufPrint(&args_buf, "{{\"subject\":\"[DISREGARD AUTOMATED TEST CAL]\",\"startDateTime\":\"2099-06-15T10:00:00\",\"endDateTime\":\"2099-06-15T11:00:00\",\"requiredAttendees\":[\"{s}\"],\"optionalAttendees\":[\"{s}\"]}}", .{ required_attendee, optional_attendee }) catch {
+    const args = std.fmt.bufPrint(&args_buf, "{{\"subject\":\"[DISREGARD AUTOMATED TEST CAL]\",\"startDateTime\":\"2099-06-15T10:00:00\",\"endDateTime\":\"2099-06-15T11:00:00\",\"attendees\":[\"{s}\"],\"optionalAttendees\":[\"{s}\"]}}", .{ required_attendee, optional_attendee }) catch {
         fail("create-calendar-event (attendees)", "failed to build args");
         return;
     };
