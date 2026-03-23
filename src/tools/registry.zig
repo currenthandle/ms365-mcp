@@ -52,9 +52,16 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
     remove_attach_props.put("draftId", schema.schemaProperty("string", "The ID of the draft containing the attachment")) catch return null;
     remove_attach_props.put("attachmentId", schema.schemaProperty("string", "The ID of the attachment to remove (from list-attachments)")) catch return null;
 
+    // --- list-chats schema ---
+    var list_chats_props = std.json.ObjectMap.init(allocator);
+    list_chats_props.put("top", schema.schemaProperty("string", "Number of chats to return per page (1-50, default 50)")) catch return null;
+    list_chats_props.put("pageToken", schema.schemaProperty("string", "Pagination token — pass the nextLink value from a previous response to get the next page")) catch return null;
+
     // --- list-chat-messages schema ---
     var chat_msgs_props = std.json.ObjectMap.init(allocator);
     chat_msgs_props.put("chatId", schema.schemaProperty("string", "The ID of the chat to read messages from")) catch return null;
+    chat_msgs_props.put("top", schema.schemaProperty("string", "Number of messages to return per page (1-50, default 50)")) catch return null;
+    chat_msgs_props.put("pageToken", schema.schemaProperty("string", "Pagination token — pass the nextLink value from a previous response to get the next page")) catch return null;
 
     // --- search-users schema ---
     var search_users_props = std.json.ObjectMap.init(allocator);
@@ -73,12 +80,16 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
     var list_chan_msgs_props = std.json.ObjectMap.init(allocator);
     list_chan_msgs_props.put("teamId", schema.schemaProperty("string", "The ID of the team (from list-teams)")) catch return null;
     list_chan_msgs_props.put("channelId", schema.schemaProperty("string", "The ID of the channel (from list-channels)")) catch return null;
+    list_chan_msgs_props.put("top", schema.schemaProperty("string", "Number of messages to return per page (1-50, default 50)")) catch return null;
+    list_chan_msgs_props.put("pageToken", schema.schemaProperty("string", "Pagination token — pass the nextLink value from a previous response to get the next page")) catch return null;
 
     // --- get-channel-message-replies schema ---
     var chan_replies_props = std.json.ObjectMap.init(allocator);
     chan_replies_props.put("teamId", schema.schemaProperty("string", "The ID of the team (from list-teams)")) catch return null;
     chan_replies_props.put("channelId", schema.schemaProperty("string", "The ID of the channel (from list-channels)")) catch return null;
     chan_replies_props.put("messageId", schema.schemaProperty("string", "The ID of the top-level message/post (from list-channel-messages)")) catch return null;
+    chan_replies_props.put("top", schema.schemaProperty("string", "Number of replies to return per page (1-50, default 50)")) catch return null;
+    chan_replies_props.put("pageToken", schema.schemaProperty("string", "Pagination token — pass the nextLink value from a previous response to get the next page")) catch return null;
 
     // --- reply-to-channel-message schema ---
     var chan_reply_props = std.json.ObjectMap.init(allocator);
@@ -220,12 +231,12 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
         // --- Teams Chat ---
         .{
             .name = "list-chats",
-            .description = "List recent Microsoft Teams chats including 1:1 conversations, group chats, and meeting chats.",
-            .inputSchema = schema.emptySchema(),
+            .description = "List Microsoft Teams chats including 1:1 conversations, group chats, and meeting chats. Supports pagination — pass the nextLink from the response as pageToken to get the next page. Use 'top' to control page size (1-50, default 50).",
+            .inputSchema = schema.buildSchema(list_chats_props, &.{}),
         },
         .{
             .name = "list-chat-messages",
-            .description = "List recent messages in a Microsoft Teams chat by chat ID.",
+            .description = "List messages in a Microsoft Teams chat by chat ID. Supports pagination — pass the nextLink from the response as pageToken to get the next page. Use 'top' to control page size (1-50, default 50).",
             .inputSchema = schema.buildSchema(chat_msgs_props, &.{"chatId"}),
         },
         .{
@@ -251,12 +262,12 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
         },
         .{
             .name = "list-channel-messages",
-            .description = "List recent messages (posts) in a Microsoft Teams channel. These are channel conversations, not 1:1 chats. Use list-teams then list-channels to get the IDs. Each message has an 'id' field you can use with get-channel-message-replies to read the thread.",
+            .description = "List messages (posts) in a Microsoft Teams channel. Supports pagination — pass the nextLink from the response as pageToken to get the next page. Use 'top' to control page size (1-50, default 50). These are channel conversations, not 1:1 chats. Use list-teams then list-channels to get the IDs.",
             .inputSchema = schema.buildSchema(list_chan_msgs_props, &.{ "teamId", "channelId" }),
         },
         .{
             .name = "get-channel-message-replies",
-            .description = "Get replies to a specific message thread in a Microsoft Teams channel. Use list-channel-messages first to find the messageId of the post you want replies for.",
+            .description = "Get replies to a specific message thread in a Microsoft Teams channel. Supports pagination — pass the nextLink from the response as pageToken to get the next page. Use list-channel-messages first to find the messageId.",
             .inputSchema = schema.buildSchema(chan_replies_props, &.{ "teamId", "channelId", "messageId" }),
         },
         .{

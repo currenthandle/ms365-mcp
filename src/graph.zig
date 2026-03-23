@@ -29,6 +29,18 @@ pub fn post(allocator: Allocator, io: Io, access_token: []const u8, path: []cons
     return request(allocator, io, access_token, .POST, path, json_body);
 }
 
+/// Strip the Graph API base URL prefix from a full URL.
+/// The @odata.nextLink values are full URLs like
+/// "https://graph.microsoft.com/v1.0/teams/..." — this returns just the
+/// path portion "/teams/..." so it can be passed to our get() function.
+/// If the prefix isn't found, returns the input unchanged.
+pub fn stripGraphPrefix(url: []const u8) []const u8 {
+    if (std.mem.startsWith(u8, url, base_url)) {
+        return url[base_url.len..];
+    }
+    return url;
+}
+
 /// Make an authenticated GET request with an additional Prefer header.
 /// Used for calendar endpoints that accept `Prefer: outlook.timezone="..."`.
 /// This makes the API return times in the specified timezone AND interpret

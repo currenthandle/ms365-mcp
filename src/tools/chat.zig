@@ -10,6 +10,17 @@ const ToolContext = @import("context.zig").ToolContext;
 // Type aliases — keeps function signatures cleaner.
 const Allocator = std.mem.Allocator;
 
+/// Send a simple text result back to the MCP client.
+fn sendResult(ctx: ToolContext, text: []const u8) void {
+    const content: []const types.TextContent = &.{
+        .{ .text = text },
+    };
+    json_rpc.sendJsonResponse(ctx.writer, types.JsonRpcResponse(types.ToolCallResult){
+        .id = json_rpc.getRequestId(ctx.parsed),
+        .result = .{ .content = content },
+    });
+}
+
 /// Build a single member JSON object for the create-chat API.
 /// Template string because the field names have @ characters
 /// that can't be Zig struct field names.
@@ -21,93 +32,73 @@ fn buildMemberJson(allocator: Allocator, identifier: []const u8) ![]u8 {
     , .{identifier});
 }
 
-/// List recent messages in a Teams chat by chat ID.
+/// List messages in a Teams chat by chat ID.
+/// Supports pagination via pageToken (the @odata.nextLink from a previous response).
 pub fn handleListChatMessages(ctx: ToolContext) void {
-    // Check that the user is logged in.
     const token = state_mod.requireAuth(ctx.state, ctx.allocator, ctx.io, ctx.client_id, ctx.tenant_id, ctx.writer, json_rpc.getRequestId(ctx.parsed)) orelse return;
 
-    // Get the tool arguments — we need "chatId".
     const args = json_rpc.getToolArgs(ctx.parsed) orelse {
-        const content: []const types.TextContent = &.{
-            .{ .text = "Missing arguments. Provide chatId." },
-        };
-        const result = types.ToolCallResult{ .content = content };
-        json_rpc.sendJsonResponse(ctx.writer, types.JsonRpcResponse(types.ToolCallResult){
-            .id = json_rpc.getRequestId(ctx.parsed),
-            .result = result,
-        });
+        sendResult(ctx, "Missing arguments. Provide chatId.");
         return;
     };
 
-    // "chatId" — the ID of the chat to read messages from.
-    // The LLM gets this from the list-chats results.
-    const chat_id = json_rpc.getStringArg(args, "chatId") orelse {
-        const content: []const types.TextContent = &.{
-            .{ .text = "Missing 'chatId' argument." },
+    // If pageToken is provided, use it directly (it's a full @odata.nextLink URL).
+    const page_token = json_rpc.getStringArg(args, "pageToken");
+    const path = if (page_token) |pt| blk: {
+        break :blk graph.stripGraphPrefix(pt);
+    } else blk: {
+        const chat_id = json_rpc.getStringArg(args, "chatId") orelse {
+            sendResult(ctx, "Missing 'chatId' argument.");
+            return;
         };
-        const result = types.ToolCallResult{ .content = content };
-        json_rpc.sendJsonResponse(ctx.writer, types.JsonRpcResponse(types.ToolCallResult){
-            .id = json_rpc.getRequestId(ctx.parsed),
-            .result = result,
-        });
-        return;
+
+        const top = json_rpc.getStringArg(args, "top") orelse "50";
+
+        break :blk std.fmt.allocPrint(
+            ctx.allocator,
+            "/me/chats/{s}/messages?$top={s}",
+            .{ chat_id, top },
+        ) catch return;
     };
+    defer if (page_token == null) ctx.allocator.free(path);
 
-    // Build the path with the chatId baked in.
-    // $top=20 — get the 20 most recent messages
-    const path = std.fmt.allocPrint(
-        ctx.allocator,
-        "/me/chats/{s}/messages?$top=20",
-        .{chat_id},
-    ) catch return;
-    defer ctx.allocator.free(path);
-
-    // GET the messages.
     const response_body = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
         std.debug.print("ms-mcp: list-chat-messages failed: {}\n", .{err});
-        const content: []const types.TextContent = &.{
-            .{ .text = "Failed to fetch chat messages." },
-        };
-        const result = types.ToolCallResult{ .content = content };
-        json_rpc.sendJsonResponse(ctx.writer, types.JsonRpcResponse(types.ToolCallResult){
-            .id = json_rpc.getRequestId(ctx.parsed),
-            .result = result,
-        });
+        sendResult(ctx, "Failed to fetch chat messages.");
         return;
     };
     defer ctx.allocator.free(response_body);
 
-    // Return the raw JSON — the LLM will summarize it.
-    const content: []const types.TextContent = &.{
-        .{ .text = response_body },
-    };
-    const result = types.ToolCallResult{ .content = content };
-    json_rpc.sendJsonResponse(ctx.writer, types.JsonRpcResponse(types.ToolCallResult){
-        .id = json_rpc.getRequestId(ctx.parsed),
-        .result = result,
-    });
+    // Return raw JSON — includes @odata.nextLink for pagination.
+    sendResult(ctx, response_body);
 }
 
-/// List recent Teams chats with condensed member summaries.
+/// List Teams chats with condensed member summaries.
+/// Supports pagination via pageToken (the @odata.nextLink from a previous response).
 pub fn handleListChats(ctx: ToolContext) void {
-    // Check that the user is logged in.
     const token = state_mod.requireAuth(ctx.state, ctx.allocator, ctx.io, ctx.client_id, ctx.tenant_id, ctx.writer, json_rpc.getRequestId(ctx.parsed)) orelse return;
 
-    // Call Graph API to list the user's Teams chats.
-    // $expand=members includes participant names in the response.
+    // Get optional arguments for pagination.
+    const args = json_rpc.getToolArgs(ctx.parsed);
+    const page_token = if (args) |a| json_rpc.getStringArg(a, "pageToken") else null;
+
+    const path = if (page_token) |pt| blk: {
+        break :blk graph.stripGraphPrefix(pt);
+    } else blk: {
+        const top = if (args) |a| (json_rpc.getStringArg(a, "top") orelse "50") else "50";
+        break :blk std.fmt.allocPrint(
+            ctx.allocator,
+            "/me/chats?$top={s}&$select=id,topic,chatType,lastUpdatedDateTime&$expand=members",
+            .{top},
+        ) catch return;
+    };
+    defer if (page_token == null) ctx.allocator.free(path);
+
     const response_body = graph.get(
-        ctx.allocator, ctx.io, token,
-        "/me/chats?$top=20&$select=id,topic,chatType,lastUpdatedDateTime&$expand=members",
+        ctx.allocator, ctx.io, token, path,
     ) catch |err| {
         std.debug.print("ms-mcp: list-chats failed: {}\n", .{err});
-        const content: []const types.TextContent = &.{
-            .{ .text = "Failed to fetch chats." },
-        };
-        const result = types.ToolCallResult{ .content = content };
-        json_rpc.sendJsonResponse(ctx.writer, types.JsonRpcResponse(types.ToolCallResult){
-            .id = json_rpc.getRequestId(ctx.parsed),
-            .result = result,
-        });
+        sendResult(ctx, "Failed to fetch chats.");
         return;
     };
     defer ctx.allocator.free(response_body);
@@ -118,14 +109,7 @@ pub fn handleListChats(ctx: ToolContext) void {
     const chats_parsed = std.json.parseFromSlice(
         std.json.Value, ctx.allocator, response_body, .{},
     ) catch {
-        const content: []const types.TextContent = &.{
-            .{ .text = response_body },
-        };
-        const result = types.ToolCallResult{ .content = content };
-        json_rpc.sendJsonResponse(ctx.writer, types.JsonRpcResponse(types.ToolCallResult){
-            .id = json_rpc.getRequestId(ctx.parsed),
-            .result = result,
-        });
+        sendResult(ctx, response_body);
         return;
     };
     defer chats_parsed.deinit();
@@ -203,16 +187,20 @@ pub fn handleListChats(ctx: ToolContext) void {
         sw.print(" — id: {s}\n", .{chat_id}) catch continue;
     }
 
+    // Include the nextLink if there are more pages.
+    if (chats_root.get("@odata.nextLink")) |next_val| {
+        const next_link = switch (next_val) {
+            .string => |s| s,
+            else => null,
+        };
+        if (next_link) |nl| {
+            sw.print("\nnextLink: {s}\n", .{nl}) catch {};
+        }
+    }
+
     // Return the condensed summary.
     const summary = summary_buf.written();
-    const content: []const types.TextContent = &.{
-        .{ .text = if (summary.len > 0) summary else "No chats found." },
-    };
-    const result = types.ToolCallResult{ .content = content };
-    json_rpc.sendJsonResponse(ctx.writer, types.JsonRpcResponse(types.ToolCallResult){
-        .id = json_rpc.getRequestId(ctx.parsed),
-        .result = result,
-    });
+    sendResult(ctx, if (summary.len > 0) summary else "No chats found.");
 }
 
 /// Send a message in a Teams chat.

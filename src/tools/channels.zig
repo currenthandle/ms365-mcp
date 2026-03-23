@@ -131,6 +131,7 @@ pub fn handleListChannels(ctx: ToolContext) void {
 }
 
 /// List messages (posts) in a Teams channel.
+/// Supports pagination via pageToken (the @odata.nextLink from a previous response).
 /// Calls GET /teams/{teamId}/channels/{channelId}/messages.
 pub fn handleListChannelMessages(ctx: ToolContext) void {
     const token = state_mod.requireAuth(ctx.state, ctx.allocator, ctx.io, ctx.client_id, ctx.tenant_id, ctx.writer, json_rpc.getRequestId(ctx.parsed)) orelse return;
@@ -139,21 +140,33 @@ pub fn handleListChannelMessages(ctx: ToolContext) void {
         sendToolError(ctx, "Missing arguments. Provide teamId and channelId.");
         return;
     };
-    const team_id = json_rpc.getStringArg(args, "teamId") orelse {
-        sendToolError(ctx, "Missing 'teamId' argument. Use list-teams to find it.");
-        return;
-    };
-    const channel_id = json_rpc.getStringArg(args, "channelId") orelse {
-        sendToolError(ctx, "Missing 'channelId' argument. Use list-channels to find it.");
-        return;
-    };
 
-    const path = std.fmt.allocPrint(
-        ctx.allocator,
-        "/teams/{s}/channels/{s}/messages?$top=20",
-        .{ team_id, channel_id },
-    ) catch return;
-    defer ctx.allocator.free(path);
+    // If pageToken is provided, use it directly as the full URL path.
+    const page_token = json_rpc.getStringArg(args, "pageToken");
+    const path = if (page_token) |pt| blk: {
+        // The nextLink is a full URL like "https://graph.microsoft.com/v1.0/teams/..."
+        // Strip the host prefix to get just the path + query string.
+        break :blk graph.stripGraphPrefix(pt);
+    } else blk: {
+        const team_id = json_rpc.getStringArg(args, "teamId") orelse {
+            sendToolError(ctx, "Missing 'teamId' argument. Use list-teams to find it.");
+            return;
+        };
+        const channel_id = json_rpc.getStringArg(args, "channelId") orelse {
+            sendToolError(ctx, "Missing 'channelId' argument. Use list-channels to find it.");
+            return;
+        };
+
+        // Default to 50 messages per page (Graph API max for channel messages).
+        const top = json_rpc.getStringArg(args, "top") orelse "50";
+
+        break :blk std.fmt.allocPrint(
+            ctx.allocator,
+            "/teams/{s}/channels/{s}/messages?$top={s}",
+            .{ team_id, channel_id, top },
+        ) catch return;
+    };
+    defer if (page_token == null) ctx.allocator.free(path);
 
     const response_body = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
         std.debug.print("ms-mcp: list-channel-messages failed: {}\n", .{err});
@@ -162,11 +175,12 @@ pub fn handleListChannelMessages(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response_body);
 
-    // Return raw JSON — the LLM will summarize it.
+    // Return raw JSON — includes @odata.nextLink for pagination.
     sendToolResult(ctx, response_body);
 }
 
 /// Get replies to a specific message (thread) in a Teams channel.
+/// Supports pagination via pageToken (the @odata.nextLink from a previous response).
 /// Calls GET /teams/{teamId}/channels/{channelId}/messages/{messageId}/replies.
 pub fn handleGetChannelMessageReplies(ctx: ToolContext) void {
     const token = state_mod.requireAuth(ctx.state, ctx.allocator, ctx.io, ctx.client_id, ctx.tenant_id, ctx.writer, json_rpc.getRequestId(ctx.parsed)) orelse return;
@@ -175,25 +189,34 @@ pub fn handleGetChannelMessageReplies(ctx: ToolContext) void {
         sendToolError(ctx, "Missing arguments. Provide teamId, channelId, and messageId.");
         return;
     };
-    const team_id = json_rpc.getStringArg(args, "teamId") orelse {
-        sendToolError(ctx, "Missing 'teamId' argument.");
-        return;
-    };
-    const channel_id = json_rpc.getStringArg(args, "channelId") orelse {
-        sendToolError(ctx, "Missing 'channelId' argument.");
-        return;
-    };
-    const message_id = json_rpc.getStringArg(args, "messageId") orelse {
-        sendToolError(ctx, "Missing 'messageId' argument. Use list-channel-messages to find it.");
-        return;
-    };
 
-    const path = std.fmt.allocPrint(
-        ctx.allocator,
-        "/teams/{s}/channels/{s}/messages/{s}/replies?$top=50",
-        .{ team_id, channel_id, message_id },
-    ) catch return;
-    defer ctx.allocator.free(path);
+    // If pageToken is provided, use it directly as the full URL path.
+    const page_token = json_rpc.getStringArg(args, "pageToken");
+    const path = if (page_token) |pt| blk: {
+        break :blk graph.stripGraphPrefix(pt);
+    } else blk: {
+        const team_id = json_rpc.getStringArg(args, "teamId") orelse {
+            sendToolError(ctx, "Missing 'teamId' argument.");
+            return;
+        };
+        const channel_id = json_rpc.getStringArg(args, "channelId") orelse {
+            sendToolError(ctx, "Missing 'channelId' argument.");
+            return;
+        };
+        const message_id = json_rpc.getStringArg(args, "messageId") orelse {
+            sendToolError(ctx, "Missing 'messageId' argument. Use list-channel-messages to find it.");
+            return;
+        };
+
+        const top = json_rpc.getStringArg(args, "top") orelse "50";
+
+        break :blk std.fmt.allocPrint(
+            ctx.allocator,
+            "/teams/{s}/channels/{s}/messages/{s}/replies?$top={s}",
+            .{ team_id, channel_id, message_id, top },
+        ) catch return;
+    };
+    defer if (page_token == null) ctx.allocator.free(path);
 
     const response_body = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
         std.debug.print("ms-mcp: get-channel-message-replies failed: {}\n", .{err});
@@ -202,7 +225,7 @@ pub fn handleGetChannelMessageReplies(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response_body);
 
-    // Return raw JSON — the LLM will summarize it.
+    // Return raw JSON — includes @odata.nextLink for pagination.
     sendToolResult(ctx, response_body);
 }
 
