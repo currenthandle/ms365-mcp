@@ -162,6 +162,9 @@ fn request(
         .{ .name = "Authorization", .value = auth_header },
     };
 
+    // For empty body (e.g. softDelete), send with Content-Length: 0 but no Content-Type.
+    const has_body = if (json_body) |b| b.len > 0 else false;
+
     // fetch() sends the request and reads the response in one call.
     // We don't check the status — we always return the body.
     // _ discards the result since Zig requires all values to be used.
@@ -169,7 +172,7 @@ fn request(
         .location = .{ .url = url },
         .method = method,
         .payload = json_body,
-        .extra_headers = if (json_body != null) headers_with_content_type else headers_auth_only,
+        .extra_headers = if (has_body) headers_with_content_type else headers_auth_only,
         .response_writer = &response_buf.writer,
     });
 
