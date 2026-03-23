@@ -203,3 +203,58 @@ pub const DraftMailRequest = struct {
     /// Optional BCC recipients — omitted from JSON when null.
     bccRecipients: ?[]const SendMailRequest.Message.Recipient = null,
 };
+
+// --- Tests ---
+
+const testing = std.testing;
+
+test "htmlAutoLink plain text unchanged" {
+    const result = htmlAutoLink(testing.allocator, "hello world").?;
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("hello world", result);
+}
+
+test "htmlAutoLink wraps http URL" {
+    const result = htmlAutoLink(testing.allocator, "visit http://example.com today").?;
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("visit <a href=\"http://example.com\">http://example.com</a> today", result);
+}
+
+test "htmlAutoLink wraps https URL" {
+    const result = htmlAutoLink(testing.allocator, "see https://example.com").?;
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("see <a href=\"https://example.com\">https://example.com</a>", result);
+}
+
+test "htmlAutoLink converts newlines to br" {
+    const result = htmlAutoLink(testing.allocator, "line1\nline2").?;
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("line1<br>line2", result);
+}
+
+test "htmlAutoLink multiple URLs" {
+    const result = htmlAutoLink(testing.allocator, "http://a.com and http://b.com").?;
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("<a href=\"http://a.com\">http://a.com</a> and <a href=\"http://b.com\">http://b.com</a>", result);
+}
+
+test "htmlAutoLink URL at end of string" {
+    const result = htmlAutoLink(testing.allocator, "link: https://x.com").?;
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("link: <a href=\"https://x.com\">https://x.com</a>", result);
+}
+
+test "htmlAutoLink SECURITY: script tags pass through unescaped" {
+    // Documents HTML injection vulnerability — angle brackets are not escaped.
+    const result = htmlAutoLink(testing.allocator, "<script>alert(1)</script>").?;
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("<script>alert(1)</script>", result);
+}
+
+test "htmlAutoLink SECURITY: quote in URL breaks href attribute" {
+    // Documents href attribute breakout — quotes in URLs are not escaped.
+    const result = htmlAutoLink(testing.allocator, "https://evil.com/\"onmouseover=\"alert(1)").?;
+    defer testing.allocator.free(result);
+    // The " in the URL will break out of the href attribute.
+    try testing.expectEqualStrings("<a href=\"https://evil.com/\"onmouseover=\"alert(1)\">https://evil.com/\"onmouseover=\"alert(1)</a>", result);
+}

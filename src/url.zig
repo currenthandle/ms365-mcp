@@ -42,3 +42,55 @@ fn needsEncoding(c: u8) bool {
 fn hexDigit(val: u8) u8 {
     return if (val < 10) '0' + val else 'A' + (val - 10);
 }
+
+// --- Tests ---
+
+const testing = std.testing;
+
+test "encode empty string" {
+    const result = try encode(testing.allocator, "");
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("", result);
+}
+
+test "encode plain alphanumeric" {
+    const result = try encode(testing.allocator, "hello123");
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("hello123", result);
+}
+
+test "encode spaces" {
+    const result = try encode(testing.allocator, "hello world");
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("hello%20world", result);
+}
+
+test "encode special characters" {
+    const result = try encode(testing.allocator, "a=b&c");
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("a%3Db%26c", result);
+}
+
+test "encode high bytes (UTF-8)" {
+    const result = try encode(testing.allocator, "\xC3\xA9");
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("%C3%A9", result);
+}
+
+test "encode preserves unreserved chars" {
+    const result = try encode(testing.allocator, "a-b_c.d~e");
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("a-b_c.d~e", result);
+}
+
+test "encode slash and at-sign" {
+    const result = try encode(testing.allocator, "/me@host");
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("%2Fme%40host", result);
+}
+
+test "encode percent character" {
+    const result = try encode(testing.allocator, "100%");
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("100%25", result);
+}

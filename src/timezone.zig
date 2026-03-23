@@ -157,3 +157,78 @@ pub fn localToUtc(allocator: std.mem.Allocator, local: []const u8, utc_offset: i
         year, month, day, hour, min, sec,
     });
 }
+
+// --- Tests ---
+
+const testing = std.testing;
+
+test "ianaToWindows known timezone" {
+    try testing.expectEqualStrings("Eastern Standard Time", ianaToWindows("America/New_York").?);
+}
+
+test "ianaToWindows UTC" {
+    try testing.expectEqualStrings("UTC", ianaToWindows("UTC").?);
+}
+
+test "ianaToWindows unknown returns null" {
+    try testing.expect(ianaToWindows("Mars/Olympus") == null);
+}
+
+test "getUtcOffset Eastern" {
+    try testing.expectEqual(@as(i8, -5), getUtcOffset("Eastern Standard Time").?);
+}
+
+test "getUtcOffset Tokyo" {
+    try testing.expectEqual(@as(i8, 9), getUtcOffset("Tokyo Standard Time").?);
+}
+
+test "getUtcOffset unknown returns null" {
+    try testing.expect(getUtcOffset("Fake Time") == null);
+}
+
+test "localToUtc basic conversion" {
+    const result = try localToUtc(testing.allocator, "2026-02-24T09:00:00", -5);
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("2026-02-24T14:00:00Z", result);
+}
+
+test "localToUtc forward day rollover" {
+    const result = try localToUtc(testing.allocator, "2026-02-24T21:00:00", -5);
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("2026-02-25T02:00:00Z", result);
+}
+
+test "localToUtc backward day rollover" {
+    const result = try localToUtc(testing.allocator, "2026-02-24T02:00:00", 9);
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("2026-02-23T17:00:00Z", result);
+}
+
+test "localToUtc month rollover" {
+    const result = try localToUtc(testing.allocator, "2026-01-31T22:00:00", -5);
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("2026-02-01T03:00:00Z", result);
+}
+
+test "localToUtc year rollover" {
+    const result = try localToUtc(testing.allocator, "2026-12-31T22:00:00", -5);
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("2027-01-01T03:00:00Z", result);
+}
+
+test "localToUtc already UTC passthrough" {
+    const result = try localToUtc(testing.allocator, "2026-02-24T14:00:00Z", -5);
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("2026-02-24T14:00:00Z", result);
+}
+
+test "localToUtc leap year Feb 28 rollover" {
+    const result = try localToUtc(testing.allocator, "2028-02-28T22:00:00", -5);
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("2028-02-29T03:00:00Z", result);
+}
+
+test "localToUtc invalid format" {
+    const result = localToUtc(testing.allocator, "bad", 0);
+    try testing.expectError(error.InvalidFormat, result);
+}

@@ -179,3 +179,30 @@ fn request(
     // tell the user, which is way more useful than a generic "failed".
     return response_buf.toOwnedSlice();
 }
+
+// --- Tests ---
+
+const testing = std.testing;
+
+test "stripGraphPrefix removes base URL" {
+    const result = stripGraphPrefix("https://graph.microsoft.com/v1.0/teams/abc");
+    try testing.expectEqualStrings("/teams/abc", result);
+}
+
+test "stripGraphPrefix relative path unchanged" {
+    const result = stripGraphPrefix("/me/messages");
+    try testing.expectEqualStrings("/me/messages", result);
+}
+
+test "stripGraphPrefix empty string" {
+    const result = stripGraphPrefix("");
+    try testing.expectEqualStrings("", result);
+}
+
+test "stripGraphPrefix SSRF: @-sign after prefix strips to unsafe path" {
+    // Documents the SSRF vulnerability: a crafted nextLink like
+    // "https://graph.microsoft.com/v1.0@evil.com/x" strips to "@evil.com/x"
+    // which does NOT start with "/" — this should be validated by callers.
+    const result = stripGraphPrefix("https://graph.microsoft.com/v1.0@evil.com/x");
+    try testing.expectEqualStrings("@evil.com/x", result);
+}

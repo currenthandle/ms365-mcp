@@ -261,3 +261,76 @@ pub fn handleSendEmail(ctx: ToolContext) void {
         .result = result,
     });
 }
+
+// --- Tests ---
+
+const testing = std.testing;
+
+/// Build a test ObjectMap with a JSON array value at the given key.
+fn buildTestArgs(key: []const u8, items: []const std.json.Value) std.json.ObjectMap {
+    var args = std.json.ObjectMap.init(testing.allocator);
+    var arr = std.json.Array.init(testing.allocator);
+    for (items) |item| {
+        arr.append(item) catch {};
+    }
+    args.put(key, .{ .array = arr }) catch {};
+    return args;
+}
+
+test "parseRecipients valid array" {
+    var args = buildTestArgs("to", &.{
+        .{ .string = "a@b.com" },
+        .{ .string = "c@d.com" },
+    });
+    defer args.deinit();
+
+    const recipients = (try parseRecipients(testing.allocator, args, "to")).?;
+    defer testing.allocator.free(recipients);
+
+    try testing.expectEqual(@as(usize, 2), recipients.len);
+    try testing.expectEqualStrings("a@b.com", recipients[0].emailAddress.address);
+    try testing.expectEqualStrings("c@d.com", recipients[1].emailAddress.address);
+}
+
+test "parseRecipients missing key returns null" {
+    var args = std.json.ObjectMap.init(testing.allocator);
+    defer args.deinit();
+    try testing.expect((try parseRecipients(testing.allocator, args, "to")) == null);
+}
+
+test "parseRecipients non-array returns null" {
+    var args = std.json.ObjectMap.init(testing.allocator);
+    defer args.deinit();
+    args.put("to", .{ .string = "a@b.com" }) catch {};
+    try testing.expect((try parseRecipients(testing.allocator, args, "to")) == null);
+}
+
+test "parseRecipients non-string element returns null" {
+    var args = buildTestArgs("to", &.{
+        .{ .integer = 42 },
+    });
+    defer args.deinit();
+    try testing.expect((try parseRecipients(testing.allocator, args, "to")) == null);
+}
+
+test "parseRecipients empty array" {
+    var args = buildTestArgs("to", &.{});
+    defer args.deinit();
+
+    const recipients = (try parseRecipients(testing.allocator, args, "to")).?;
+    defer testing.allocator.free(recipients);
+
+    try testing.expectEqual(@as(usize, 0), recipients.len);
+}
+
+test "parseRecipients struct shape" {
+    var args = buildTestArgs("to", &.{
+        .{ .string = "test@example.com" },
+    });
+    defer args.deinit();
+
+    const recipients = (try parseRecipients(testing.allocator, args, "to")).?;
+    defer testing.allocator.free(recipients);
+
+    try testing.expectEqualStrings("test@example.com", recipients[0].emailAddress.address);
+}

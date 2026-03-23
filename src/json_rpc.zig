@@ -95,3 +95,74 @@ pub fn sendJsonResponse(writer: *Writer, response: anytype) void {
     writer.writeAll("\n") catch return;
     writer.flush() catch return;
 }
+
+// --- Tests ---
+
+const testing = std.testing;
+
+/// Parse a JSON string into a Value for testing.
+fn parseTestJson(json: []const u8) !std.json.Parsed(std.json.Value) {
+    return std.json.parseFromSlice(std.json.Value, testing.allocator, json, .{});
+}
+
+test "getRequestId extracts integer id" {
+    var parsed = try parseTestJson("{\"id\": 42, \"method\": \"test\"}");
+    defer parsed.deinit();
+    try testing.expectEqual(@as(i64, 42), getRequestId(parsed.value));
+}
+
+test "getRequestId missing id returns 0" {
+    var parsed = try parseTestJson("{\"method\": \"test\"}");
+    defer parsed.deinit();
+    try testing.expectEqual(@as(i64, 0), getRequestId(parsed.value));
+}
+
+test "getRequestId non-object returns 0" {
+    try testing.expectEqual(@as(i64, 0), getRequestId(.null));
+}
+
+test "getToolName extracts name from params" {
+    var parsed = try parseTestJson("{\"params\":{\"name\":\"login\"}}");
+    defer parsed.deinit();
+    try testing.expectEqualStrings("login", getToolName(parsed.value).?);
+}
+
+test "getToolName missing params returns null" {
+    var parsed = try parseTestJson("{\"id\":1}");
+    defer parsed.deinit();
+    try testing.expect(getToolName(parsed.value) == null);
+}
+
+test "getToolArgs extracts arguments object" {
+    var parsed = try parseTestJson("{\"params\":{\"name\":\"x\",\"arguments\":{\"to\":\"a@b.com\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expectEqualStrings("a@b.com", getStringArg(args, "to").?);
+}
+
+test "getToolArgs missing arguments returns null" {
+    var parsed = try parseTestJson("{\"params\":{\"name\":\"x\"}}");
+    defer parsed.deinit();
+    try testing.expect(getToolArgs(parsed.value) == null);
+}
+
+test "getStringArg extracts string value" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"key\":\"val\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expectEqualStrings("val", getStringArg(args, "key").?);
+}
+
+test "getStringArg non-string returns null" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"key\":5}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expect(getStringArg(args, "key") == null);
+}
+
+test "getStringArg missing key returns null" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expect(getStringArg(args, "missing") == null);
+}
