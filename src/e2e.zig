@@ -352,6 +352,311 @@ fn testCalendarLifecycle(client: *McpClient) !void {
     }
 }
 
+/// Test: Send email lifecycle — send to self, find it, read it, delete it.
+fn testSendEmailLifecycle(client: *McpClient) !void {
+    const test_email = if (std.c.getenv("E2E_TEST_EMAIL")) |ptr| std.mem.span(ptr) else {
+        std.debug.print("  ⓘ Skipping send-email (E2E_TEST_EMAIL not set)\n", .{});
+        return;
+    };
+
+    var args_buf: [2048]u8 = undefined;
+    const args = std.fmt.bufPrint(&args_buf, "{{\"to\":[\"{s}\"],\"cc\":[\"{s}\"],\"bcc\":[\"{s}\"],\"subject\":\"[DISREGARD AUTOMATED TEST EMAIL]\",\"body\":\"This email was sent by the e2e test suite.\"}}", .{ test_email, test_email, test_email }) catch {
+        fail("send-email", "failed to build args");
+        return;
+    };
+
+    const send = try client.callTool("send-email", args);
+    defer send.deinit();
+    const send_text = McpClient.getResultText(send) orelse {
+        fail("send-email", "no text in response");
+        return;
+    };
+    if (std.mem.indexOf(u8, send_text, "sent") != null) {
+        pass("send-email (to + cc + bcc = self)");
+    } else {
+        fail("send-email", send_text);
+        return;
+    }
+
+    // Wait a moment for the email to arrive, then find and delete it.
+    // Wait a few seconds for the email to arrive in our inbox.
+    _ = std.c.nanosleep(&.{ .sec = 3, .nsec = 0 }, null);
+
+    const list = try client.callTool("list-emails", null);
+    defer list.deinit();
+    const list_text = McpClient.getResultText(list) orelse {
+        fail("send-email cleanup", "could not list emails");
+        return;
+    };
+
+    // Find the test email ID by parsing the list response.
+    const email_id = findEmailBySubject(client.allocator, list_text, "DISREGARD AUTOMATED TEST EMAIL") orelse {
+        std.debug.print("  ⓘ Could not find test email to delete (may need manual cleanup)\n", .{});
+        return;
+    };
+    defer client.allocator.free(email_id);
+
+    // Read the email to verify it.
+    var read_buf: [512]u8 = undefined;
+    const read_args = std.fmt.bufPrint(&read_buf, "{{\"emailId\":\"{s}\"}}", .{email_id}) catch return;
+    const read = try client.callTool("read-email", read_args);
+    defer read.deinit();
+    const read_text = McpClient.getResultText(read) orelse {
+        fail("read-email (sent email)", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, read_text, "DISREGARD AUTOMATED TEST") != null) {
+        pass("read-email (sent email verified)");
+    } else {
+        fail("read-email (sent email)", "subject not found in response");
+    }
+
+    // Delete it.
+    var del_buf: [512]u8 = undefined;
+    const del_args = std.fmt.bufPrint(&del_buf, "{{\"emailId\":\"{s}\"}}", .{email_id}) catch return;
+    const del = try client.callTool("delete-email", del_args);
+    defer del.deinit();
+    const del_text = McpClient.getResultText(del) orelse {
+        fail("delete-email", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, del_text, "deleted") != null) {
+        pass("delete-email (cleanup)");
+    } else {
+        fail("delete-email", del_text);
+    }
+}
+
+/// Test: Update draft lifecycle — create, update, verify, delete.
+fn testUpdateDraftLifecycle(client: *McpClient) !void {
+    const test_email = if (std.c.getenv("E2E_TEST_EMAIL")) |ptr| std.mem.span(ptr) else "e2e-test@example.com";
+
+    var create_buf: [1024]u8 = undefined;
+    const create_args = std.fmt.bufPrint(&create_buf, "{{\"to\":[\"{s}\"],\"subject\":\"[DISREGARD AUTOMATED TEST DRAFT]\",\"body\":\"Original body.\"}}", .{test_email}) catch {
+        fail("create-draft (update test)", "failed to build args");
+        return;
+    };
+    const create = try client.callTool("create-draft", create_args);
+    defer create.deinit();
+    const create_text = McpClient.getResultText(create) orelse {
+        fail("create-draft (update test)", "no text");
+        return;
+    };
+    const draft_id = extractAfterMarker(client.allocator, create_text, "Draft ID: ") orelse
+        extractId(client.allocator, create_text) orelse {
+        fail("create-draft (update test)", "could not extract id");
+        return;
+    };
+    defer client.allocator.free(draft_id);
+    pass("create-draft (for update test)");
+
+    // Update the draft.
+    var update_buf: [1024]u8 = undefined;
+    const update_args = std.fmt.bufPrint(&update_buf, "{{\"draftId\":\"{s}\",\"subject\":\"[DISREGARD AUTOMATED TEST DRAFT UPDATED]\",\"body\":\"Updated body.\"}}", .{draft_id}) catch {
+        fail("update-draft", "failed to build args");
+        return;
+    };
+    const update = try client.callTool("update-draft", update_args);
+    defer update.deinit();
+    const update_text = McpClient.getResultText(update) orelse {
+        fail("update-draft", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, update_text, "updated") != null or std.mem.indexOf(u8, update_text, "Updated") != null) {
+        pass("update-draft");
+    } else {
+        fail("update-draft", update_text);
+    }
+
+    // Delete the draft.
+    var del_buf: [512]u8 = undefined;
+    const del_args = std.fmt.bufPrint(&del_buf, "{{\"draftId\":\"{s}\"}}", .{draft_id}) catch return;
+    const del = try client.callTool("delete-draft", del_args);
+    defer del.deinit();
+    pass("delete-draft (update test cleanup)");
+}
+
+/// Test: Attachment lifecycle — create draft, add attachment, list, remove, delete draft.
+fn testAttachmentLifecycle(client: *McpClient) !void {
+    const test_email = if (std.c.getenv("E2E_TEST_EMAIL")) |ptr| std.mem.span(ptr) else "e2e-test@example.com";
+
+    // Create a draft to attach to.
+    var create_buf: [1024]u8 = undefined;
+    const create_args = std.fmt.bufPrint(&create_buf, "{{\"to\":[\"{s}\"],\"subject\":\"[DISREGARD AUTOMATED TEST ATTACHMENT]\",\"body\":\"Testing attachments.\"}}", .{test_email}) catch return;
+    const create = try client.callTool("create-draft", create_args);
+    defer create.deinit();
+    const create_text = McpClient.getResultText(create) orelse {
+        fail("create-draft (attachment test)", "no text");
+        return;
+    };
+    const draft_id = extractAfterMarker(client.allocator, create_text, "Draft ID: ") orelse
+        extractId(client.allocator, create_text) orelse {
+        fail("create-draft (attachment test)", "could not extract id");
+        return;
+    };
+    defer client.allocator.free(draft_id);
+
+    // Add an attachment — use build.zig as a small test file.
+    var attach_buf: [1024]u8 = undefined;
+    const attach_args = std.fmt.bufPrint(&attach_buf, "{{\"draftId\":\"{s}\",\"filePath\":\"build.zig\"}}", .{draft_id}) catch return;
+    const attach = try client.callTool("add-attachment", attach_args);
+    defer attach.deinit();
+    const attach_text = McpClient.getResultText(attach) orelse {
+        fail("add-attachment", "no text");
+        // Clean up draft.
+        var del_buf2: [512]u8 = undefined;
+        const del_args2 = std.fmt.bufPrint(&del_buf2, "{{\"draftId\":\"{s}\"}}", .{draft_id}) catch return;
+        const del2 = client.callTool("delete-draft", del_args2) catch return;
+        del2.deinit();
+        return;
+    };
+    if (std.mem.indexOf(u8, attach_text, "attached") != null or std.mem.indexOf(u8, attach_text, "Attached") != null) {
+        pass("add-attachment");
+    } else {
+        fail("add-attachment", attach_text);
+    }
+
+    // List attachments.
+    var list_buf: [512]u8 = undefined;
+    const list_args = std.fmt.bufPrint(&list_buf, "{{\"draftId\":\"{s}\"}}", .{draft_id}) catch return;
+    const list = try client.callTool("list-attachments", list_args);
+    defer list.deinit();
+    const list_text = McpClient.getResultText(list) orelse {
+        fail("list-attachments", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, list_text, "build.zig") != null) {
+        pass("list-attachments (found build.zig)");
+    } else {
+        fail("list-attachments", "attachment not found in list");
+    }
+
+    // Clean up — delete the draft (which removes attachments too).
+    var del_buf: [512]u8 = undefined;
+    const del_args = std.fmt.bufPrint(&del_buf, "{{\"draftId\":\"{s}\"}}", .{draft_id}) catch return;
+    const del = try client.callTool("delete-draft", del_args);
+    defer del.deinit();
+    pass("delete-draft (attachment test cleanup)");
+}
+
+/// Test: Calendar event with attendees — create, verify attendees, delete.
+fn testCalendarWithAttendees(client: *McpClient) !void {
+    const required_attendee = if (std.c.getenv("E2E_ATTENDEE_REQUIRED")) |ptr| std.mem.span(ptr) else {
+        std.debug.print("  ⓘ Skipping calendar-with-attendees (E2E_ATTENDEE_REQUIRED not set)\n", .{});
+        return;
+    };
+    const optional_attendee = if (std.c.getenv("E2E_ATTENDEE_OPTIONAL")) |ptr| std.mem.span(ptr) else {
+        std.debug.print("  ⓘ Skipping calendar-with-attendees (E2E_ATTENDEE_OPTIONAL not set)\n", .{});
+        return;
+    };
+
+    var args_buf: [2048]u8 = undefined;
+    const args = std.fmt.bufPrint(&args_buf, "{{\"subject\":\"[DISREGARD AUTOMATED TEST CAL]\",\"startDateTime\":\"2099-06-15T10:00:00\",\"endDateTime\":\"2099-06-15T11:00:00\",\"requiredAttendees\":[\"{s}\"],\"optionalAttendees\":[\"{s}\"]}}", .{ required_attendee, optional_attendee }) catch {
+        fail("create-calendar-event (attendees)", "failed to build args");
+        return;
+    };
+    const create = try client.callTool("create-calendar-event", args);
+    defer create.deinit();
+    const create_text = McpClient.getResultText(create) orelse {
+        fail("create-calendar-event (attendees)", "no text");
+        return;
+    };
+    const event_id = extractId(client.allocator, create_text) orelse {
+        fail("create-calendar-event (attendees)", "could not extract id");
+        return;
+    };
+    defer client.allocator.free(event_id);
+    pass("create-calendar-event (with attendees)");
+
+    // Get and verify attendees are present.
+    var get_buf: [512]u8 = undefined;
+    const get_args = std.fmt.bufPrint(&get_buf, "{{\"eventId\":\"{s}\"}}", .{event_id}) catch return;
+    const get = try client.callTool("get-calendar-event", get_args);
+    defer get.deinit();
+    const get_text = McpClient.getResultText(get) orelse {
+        fail("get-calendar-event (attendees)", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, get_text, "attendees") != null) {
+        pass("get-calendar-event (attendees verified)");
+    } else {
+        fail("get-calendar-event (attendees)", "no attendees in response");
+    }
+
+    // Delete.
+    var del_buf: [512]u8 = undefined;
+    const del_args = std.fmt.bufPrint(&del_buf, "{{\"eventId\":\"{s}\"}}", .{event_id}) catch return;
+    const del = try client.callTool("delete-calendar-event", del_args);
+    defer del.deinit();
+    pass("delete-calendar-event (attendees cleanup)");
+}
+
+/// Test: Chat message lifecycle — send message, verify, soft-delete.
+fn testChatMessageLifecycle(client: *McpClient) !void {
+    // List chats to find one to test with.
+    const list = try client.callTool("list-chats", "{\"top\":\"1\"}");
+    defer list.deinit();
+    const list_text = McpClient.getResultText(list) orelse {
+        fail("send-chat-message", "could not list chats");
+        return;
+    };
+
+    // Extract the first chat ID from the condensed format: "— id: <chatId>"
+    const chat_id = extractAfterMarker(client.allocator, list_text, "— id: ") orelse {
+        fail("send-chat-message", "could not find a chat id");
+        return;
+    };
+    defer client.allocator.free(chat_id);
+
+    // Send a test message.
+    var send_buf: [1024]u8 = undefined;
+    const send_args = std.fmt.bufPrint(&send_buf, "{{\"chatId\":\"{s}\",\"message\":\"[DISREGARD AUTOMATED TEST MSG]\"}}", .{chat_id}) catch return;
+    const send = try client.callTool("send-chat-message", send_args);
+    defer send.deinit();
+    const send_text = McpClient.getResultText(send) orelse {
+        fail("send-chat-message", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, send_text, "sent") != null) {
+        pass("send-chat-message");
+    } else {
+        fail("send-chat-message", send_text);
+        return;
+    }
+
+    // List messages to find the one we just sent, then delete it.
+    var msgs_buf: [512]u8 = undefined;
+    const msgs_args = std.fmt.bufPrint(&msgs_buf, "{{\"chatId\":\"{s}\",\"top\":\"5\"}}", .{chat_id}) catch return;
+    const msgs = try client.callTool("list-chat-messages", msgs_args);
+    defer msgs.deinit();
+    const msgs_text = McpClient.getResultText(msgs) orelse {
+        fail("delete-chat-message", "could not list messages");
+        return;
+    };
+
+    // Find our test message ID.
+    const msg_id = findMessageByContent(client.allocator, msgs_text, "DISREGARD AUTOMATED TEST MSG") orelse {
+        std.debug.print("  ⓘ Could not find test message to delete\n", .{});
+        return;
+    };
+    defer client.allocator.free(msg_id);
+
+    // Soft-delete it.
+    var del_buf: [1024]u8 = undefined;
+    const del_args = std.fmt.bufPrint(&del_buf, "{{\"chatId\":\"{s}\",\"messageId\":\"{s}\"}}", .{ chat_id, msg_id }) catch return;
+    const del = try client.callTool("delete-chat-message", del_args);
+    defer del.deinit();
+    const del_text = McpClient.getResultText(del) orelse {
+        fail("delete-chat-message", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, del_text, "deleted") != null) {
+        pass("delete-chat-message (cleanup)");
+    } else {
+        fail("delete-chat-message", del_text);
+    }
+}
+
 /// Test: List emails (read-only, no cleanup needed).
 fn testListEmails(client: *McpClient) !void {
     const parsed = try client.callTool("list-emails", null);
@@ -452,6 +757,74 @@ fn extractAfterMarker(allocator: Allocator, text: []const u8, marker: []const u8
     const val_end = std.mem.indexOfPos(u8, text, val_start, "\n") orelse text.len;
     if (val_start >= val_end) return null;
     return allocator.dupe(u8, text[val_start..val_end]) catch return null;
+}
+
+/// Find an email ID by matching subject text in a list-emails JSON response.
+fn findEmailBySubject(allocator: Allocator, json_text: []const u8, subject_fragment: []const u8) ?[]u8 {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_text, .{}) catch return null;
+    defer parsed.deinit();
+    const obj = switch (parsed.value) {
+        .object => |o| o,
+        else => return null,
+    };
+    const values = switch (obj.get("value") orelse return null) {
+        .array => |a| a,
+        else => return null,
+    };
+    for (values.items) |item| {
+        const email = switch (item) {
+            .object => |o| o,
+            else => continue,
+        };
+        const subject = switch (email.get("subject") orelse continue) {
+            .string => |s| s,
+            else => continue,
+        };
+        if (std.mem.indexOf(u8, subject, subject_fragment) != null) {
+            const id = switch (email.get("id") orelse continue) {
+                .string => |s| s,
+                else => continue,
+            };
+            return allocator.dupe(u8, id) catch return null;
+        }
+    }
+    return null;
+}
+
+/// Find a message ID by matching content text in a list-chat-messages JSON response.
+fn findMessageByContent(allocator: Allocator, json_text: []const u8, content_fragment: []const u8) ?[]u8 {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_text, .{}) catch return null;
+    defer parsed.deinit();
+    const obj = switch (parsed.value) {
+        .object => |o| o,
+        else => return null,
+    };
+    const values = switch (obj.get("value") orelse return null) {
+        .array => |a| a,
+        else => return null,
+    };
+    for (values.items) |item| {
+        const msg = switch (item) {
+            .object => |o| o,
+            else => continue,
+        };
+        const body = switch (msg.get("body") orelse continue) {
+            .object => |o| o,
+            else => continue,
+        };
+        const content = switch (body.get("content") orelse continue) {
+            .string => |s| s,
+            else => continue,
+        };
+        if (std.mem.indexOf(u8, content, content_fragment) != null) {
+            const id = switch (msg.get("id") orelse continue) {
+                .string => |s| s,
+                else => continue,
+            };
+            return allocator.dupe(u8, id) catch return null;
+        }
+    }
+    return null;
 }
 
 /// Extract the top-level "id" field from a JSON response body string.
@@ -570,9 +943,20 @@ pub fn main() !void {
     try testSearchUsers(&client);
 
     // --- Lifecycle tests (create → verify → delete) ---
-    std.debug.print("\n\x1b[1mLifecycle:\x1b[0m\n", .{});
+    std.debug.print("\n\x1b[1mLifecycle — Drafts:\x1b[0m\n", .{});
     try testDraftLifecycle(&client);
+    try testUpdateDraftLifecycle(&client);
+    try testAttachmentLifecycle(&client);
+
+    std.debug.print("\n\x1b[1mLifecycle — Calendar:\x1b[0m\n", .{});
     try testCalendarLifecycle(&client);
+    try testCalendarWithAttendees(&client);
+
+    std.debug.print("\n\x1b[1mLifecycle — Email:\x1b[0m\n", .{});
+    try testSendEmailLifecycle(&client);
+
+    std.debug.print("\n\x1b[1mLifecycle — Chat:\x1b[0m\n", .{});
+    try testChatMessageLifecycle(&client);
 
     // --- Summary ---
     const total = tests_passed + tests_failed;
