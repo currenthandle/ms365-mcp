@@ -262,6 +262,57 @@ pub fn handleSendEmail(ctx: ToolContext) void {
     });
 }
 
+/// Delete an email by ID.
+/// Calls DELETE /me/messages/{emailId}.
+pub fn handleDeleteEmail(ctx: ToolContext) void {
+    const token = state_mod.requireAuth(ctx.state, ctx.allocator, ctx.io, ctx.client_id, ctx.tenant_id, ctx.writer, json_rpc.getRequestId(ctx.parsed)) orelse return;
+
+    const args = json_rpc.getToolArgs(ctx.parsed) orelse {
+        const content: []const types.TextContent = &.{
+            .{ .text = "Missing arguments. Provide emailId." },
+        };
+        json_rpc.sendJsonResponse(ctx.writer, types.JsonRpcResponse(types.ToolCallResult){
+            .id = json_rpc.getRequestId(ctx.parsed),
+            .result = .{ .content = content },
+        });
+        return;
+    };
+
+    const email_id = json_rpc.getStringArg(args, "emailId") orelse {
+        const content: []const types.TextContent = &.{
+            .{ .text = "Missing 'emailId' argument." },
+        };
+        json_rpc.sendJsonResponse(ctx.writer, types.JsonRpcResponse(types.ToolCallResult){
+            .id = json_rpc.getRequestId(ctx.parsed),
+            .result = .{ .content = content },
+        });
+        return;
+    };
+
+    const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}", .{email_id}) catch return;
+    defer ctx.allocator.free(path);
+
+    graph.delete(ctx.allocator, ctx.io, token, path) catch |err| {
+        std.debug.print("ms-mcp: delete-email failed: {}\n", .{err});
+        const content: []const types.TextContent = &.{
+            .{ .text = "Failed to delete email." },
+        };
+        json_rpc.sendJsonResponse(ctx.writer, types.JsonRpcResponse(types.ToolCallResult){
+            .id = json_rpc.getRequestId(ctx.parsed),
+            .result = .{ .content = content },
+        });
+        return;
+    };
+
+    const content: []const types.TextContent = &.{
+        .{ .text = "Email deleted." },
+    };
+    json_rpc.sendJsonResponse(ctx.writer, types.JsonRpcResponse(types.ToolCallResult){
+        .id = json_rpc.getRequestId(ctx.parsed),
+        .result = .{ .content = content },
+    });
+}
+
 // --- Tests ---
 
 const testing = std.testing;

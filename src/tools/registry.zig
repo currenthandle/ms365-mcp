@@ -99,6 +99,28 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
     chan_reply_props.put("message", schema.schemaProperty("string", "The reply text with @Name for each person to mention (e.g. 'Hey @Rohit check this out')")) catch return null;
     chan_reply_props.put("mentions", schema.schemaProperty("string", "Optional comma-separated mention list: 'DisplayName|userId,Name2|userId2'. The userId is the Azure AD user ID found in from.user.id of channel messages. Each @Name in the message text will become a clickable Teams mention.")) catch return null;
 
+    // --- delete-email schema ---
+    var delete_email_props = std.json.ObjectMap.init(allocator);
+    delete_email_props.put("emailId", schema.schemaProperty("string", "The ID of the email to delete (from list-emails or read-email)")) catch return null;
+
+    // --- delete-chat-message schema ---
+    var delete_chat_msg_props = std.json.ObjectMap.init(allocator);
+    delete_chat_msg_props.put("chatId", schema.schemaProperty("string", "The ID of the chat containing the message")) catch return null;
+    delete_chat_msg_props.put("messageId", schema.schemaProperty("string", "The ID of the message to delete")) catch return null;
+
+    // --- delete-channel-message schema ---
+    var delete_chan_msg_props = std.json.ObjectMap.init(allocator);
+    delete_chan_msg_props.put("teamId", schema.schemaProperty("string", "The ID of the team")) catch return null;
+    delete_chan_msg_props.put("channelId", schema.schemaProperty("string", "The ID of the channel")) catch return null;
+    delete_chan_msg_props.put("messageId", schema.schemaProperty("string", "The ID of the message to delete")) catch return null;
+
+    // --- delete-channel-reply schema ---
+    var delete_chan_reply_props = std.json.ObjectMap.init(allocator);
+    delete_chan_reply_props.put("teamId", schema.schemaProperty("string", "The ID of the team")) catch return null;
+    delete_chan_reply_props.put("channelId", schema.schemaProperty("string", "The ID of the channel")) catch return null;
+    delete_chan_reply_props.put("messageId", schema.schemaProperty("string", "The ID of the parent message")) catch return null;
+    delete_chan_reply_props.put("replyId", schema.schemaProperty("string", "The ID of the reply to delete")) catch return null;
+
     // --- update-calendar-event schema ---
     var cal_update_props = std.json.ObjectMap.init(allocator);
     cal_update_props.put("eventId", schema.schemaProperty("string", "The ID of the event to update (from list-calendar-events)")) catch return null;
@@ -274,6 +296,27 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
             .name = "reply-to-channel-message",
             .description = "Reply to a message thread in a Microsoft Teams channel. Supports @mentions — pass the mentions parameter with 'DisplayName|userId' pairs and use @Name in the message text. Get user IDs from the from.user.id field in channel message replies.",
             .inputSchema = schema.buildSchema(chan_reply_props, &.{ "teamId", "channelId", "messageId", "message" }),
+        },
+        // --- Delete / Cleanup ---
+        .{
+            .name = "delete-email",
+            .description = "Delete an email by ID. Moves the email to the Deleted Items folder.",
+            .inputSchema = schema.buildSchema(delete_email_props, &.{"emailId"}),
+        },
+        .{
+            .name = "delete-chat-message",
+            .description = "Soft-delete a message in a Teams chat. The message will show as 'This message has been deleted'.",
+            .inputSchema = schema.buildSchema(delete_chat_msg_props, &.{ "chatId", "messageId" }),
+        },
+        .{
+            .name = "delete-channel-message",
+            .description = "Soft-delete a message in a Teams channel. The message will show as 'This message has been deleted'.",
+            .inputSchema = schema.buildSchema(delete_chan_msg_props, &.{ "teamId", "channelId", "messageId" }),
+        },
+        .{
+            .name = "delete-channel-reply",
+            .description = "Soft-delete a reply to a message in a Teams channel.",
+            .inputSchema = schema.buildSchema(delete_chan_reply_props, &.{ "teamId", "channelId", "messageId", "replyId" }),
         },
         // --- Utility ---
         .{

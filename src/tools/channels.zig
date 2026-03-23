@@ -466,3 +466,75 @@ fn sendToolResult(ctx: ToolContext, text: []const u8) void {
 fn sendToolError(ctx: ToolContext, text: []const u8) void {
     sendToolResult(ctx, text);
 }
+
+/// Soft-delete a channel message.
+/// Calls POST /teams/{teamId}/channels/{channelId}/messages/{messageId}/softDelete.
+pub fn handleDeleteChannelMessage(ctx: ToolContext) void {
+    const token = state_mod.requireAuth(ctx.state, ctx.allocator, ctx.io, ctx.client_id, ctx.tenant_id, ctx.writer, json_rpc.getRequestId(ctx.parsed)) orelse return;
+
+    const args = json_rpc.getToolArgs(ctx.parsed) orelse {
+        sendToolError(ctx, "Missing arguments. Provide teamId, channelId, and messageId.");
+        return;
+    };
+    const team_id = json_rpc.getStringArg(args, "teamId") orelse {
+        sendToolError(ctx, "Missing 'teamId' argument.");
+        return;
+    };
+    const channel_id = json_rpc.getStringArg(args, "channelId") orelse {
+        sendToolError(ctx, "Missing 'channelId' argument.");
+        return;
+    };
+    const message_id = json_rpc.getStringArg(args, "messageId") orelse {
+        sendToolError(ctx, "Missing 'messageId' argument.");
+        return;
+    };
+
+    const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/softDelete", .{ team_id, channel_id, message_id }) catch return;
+    defer ctx.allocator.free(path);
+
+    _ = graph.post(ctx.allocator, ctx.io, token, path, null) catch |err| {
+        std.debug.print("ms-mcp: delete-channel-message failed: {}\n", .{err});
+        sendToolError(ctx, "Failed to delete channel message.");
+        return;
+    };
+
+    sendToolResult(ctx, "Channel message deleted.");
+}
+
+/// Soft-delete a reply to a channel message.
+/// Calls POST /teams/{teamId}/channels/{channelId}/messages/{messageId}/replies/{replyId}/softDelete.
+pub fn handleDeleteChannelReply(ctx: ToolContext) void {
+    const token = state_mod.requireAuth(ctx.state, ctx.allocator, ctx.io, ctx.client_id, ctx.tenant_id, ctx.writer, json_rpc.getRequestId(ctx.parsed)) orelse return;
+
+    const args = json_rpc.getToolArgs(ctx.parsed) orelse {
+        sendToolError(ctx, "Missing arguments. Provide teamId, channelId, messageId, and replyId.");
+        return;
+    };
+    const team_id = json_rpc.getStringArg(args, "teamId") orelse {
+        sendToolError(ctx, "Missing 'teamId' argument.");
+        return;
+    };
+    const channel_id = json_rpc.getStringArg(args, "channelId") orelse {
+        sendToolError(ctx, "Missing 'channelId' argument.");
+        return;
+    };
+    const message_id = json_rpc.getStringArg(args, "messageId") orelse {
+        sendToolError(ctx, "Missing 'messageId' argument.");
+        return;
+    };
+    const reply_id = json_rpc.getStringArg(args, "replyId") orelse {
+        sendToolError(ctx, "Missing 'replyId' argument.");
+        return;
+    };
+
+    const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/replies/{s}/softDelete", .{ team_id, channel_id, message_id, reply_id }) catch return;
+    defer ctx.allocator.free(path);
+
+    _ = graph.post(ctx.allocator, ctx.io, token, path, null) catch |err| {
+        std.debug.print("ms-mcp: delete-channel-reply failed: {}\n", .{err});
+        sendToolError(ctx, "Failed to delete channel reply.");
+        return;
+    };
+
+    sendToolResult(ctx, "Channel reply deleted.");
+}

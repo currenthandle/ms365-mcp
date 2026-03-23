@@ -377,3 +377,33 @@ pub fn handleCreateChat(ctx: ToolContext) void {
         .result = result,
     });
 }
+
+/// Soft-delete a chat message.
+/// Calls POST /me/chats/{chatId}/messages/{messageId}/softDelete.
+pub fn handleDeleteChatMessage(ctx: ToolContext) void {
+    const token = state_mod.requireAuth(ctx.state, ctx.allocator, ctx.io, ctx.client_id, ctx.tenant_id, ctx.writer, json_rpc.getRequestId(ctx.parsed)) orelse return;
+
+    const args = json_rpc.getToolArgs(ctx.parsed) orelse {
+        sendResult(ctx, "Missing arguments. Provide chatId and messageId.");
+        return;
+    };
+    const chat_id = json_rpc.getStringArg(args, "chatId") orelse {
+        sendResult(ctx, "Missing 'chatId' argument.");
+        return;
+    };
+    const message_id = json_rpc.getStringArg(args, "messageId") orelse {
+        sendResult(ctx, "Missing 'messageId' argument.");
+        return;
+    };
+
+    const path = std.fmt.allocPrint(ctx.allocator, "/me/chats/{s}/messages/{s}/softDelete", .{ chat_id, message_id }) catch return;
+    defer ctx.allocator.free(path);
+
+    _ = graph.post(ctx.allocator, ctx.io, token, path, null) catch |err| {
+        std.debug.print("ms-mcp: delete-chat-message failed: {}\n", .{err});
+        sendResult(ctx, "Failed to delete chat message.");
+        return;
+    };
+
+    sendResult(ctx, "Chat message deleted.");
+}

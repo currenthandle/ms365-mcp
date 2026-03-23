@@ -11,7 +11,7 @@ const Io = std.Io;
 /// without making the user log in again.
 const scopes =
     "User.Read " ++
-    "Mail.Read " ++
+    "Mail.ReadWrite " ++
     "Mail.Send " ++
     "Calendars.ReadWrite " ++
     "MailboxSettings.ReadWrite " ++
@@ -20,8 +20,7 @@ const scopes =
     "ChatMessage.Send " ++
     "Team.ReadBasic.All " ++
     "Channel.ReadBasic.All " ++
-    "ChannelMessage.Read.All " ++
-    "ChannelMessage.Send " ++
+    "ChannelMessage.ReadWrite " ++
     "offline_access";
 
 /// What Microsoft sends back when we request a device code.

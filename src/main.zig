@@ -230,6 +230,14 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                         channel_tools.handleGetChannelMessageReplies(ctx);
                     } else if (std.mem.eql(u8, name, "reply-to-channel-message")) {
                         channel_tools.handleReplyToChannelMessage(ctx);
+                    } else if (std.mem.eql(u8, name, "delete-email")) {
+                        email_tools.handleDeleteEmail(ctx);
+                    } else if (std.mem.eql(u8, name, "delete-chat-message")) {
+                        chat_tools.handleDeleteChatMessage(ctx);
+                    } else if (std.mem.eql(u8, name, "delete-channel-message")) {
+                        channel_tools.handleDeleteChannelMessage(ctx);
+                    } else if (std.mem.eql(u8, name, "delete-channel-reply")) {
+                        channel_tools.handleDeleteChannelReply(ctx);
                     }
                 }
             } else if (std.mem.eql(u8, m, "tools/list")) {
