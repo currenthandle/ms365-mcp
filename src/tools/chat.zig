@@ -380,6 +380,7 @@ pub fn handleCreateChat(ctx: ToolContext) void {
 
 /// Soft-delete a chat message.
 /// Calls POST /me/chats/{chatId}/messages/{messageId}/softDelete.
+/// Note: Graph API requires Chat.ReadWrite permission for this endpoint.
 pub fn handleDeleteChatMessage(ctx: ToolContext) void {
     const token = state_mod.requireAuth(ctx.state, ctx.allocator, ctx.io, ctx.client_id, ctx.tenant_id, ctx.writer, json_rpc.getRequestId(ctx.parsed)) orelse return;
 
@@ -396,10 +397,12 @@ pub fn handleDeleteChatMessage(ctx: ToolContext) void {
         return;
     };
 
+    // Graph API softDelete: POST with empty JSON body (not null — Zig HTTP client
+    // asserts on POST with null payload, and empty string causes connection issues).
     const path = std.fmt.allocPrint(ctx.allocator, "/me/chats/{s}/messages/{s}/softDelete", .{ chat_id, message_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, "") catch |err| {
+    _ = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch |err| {
         std.debug.print("ms-mcp: delete-chat-message failed: {}\n", .{err});
         sendResult(ctx, "Failed to delete chat message.");
         return;

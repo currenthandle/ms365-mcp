@@ -492,7 +492,7 @@ pub fn handleDeleteChannelMessage(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/softDelete", .{ team_id, channel_id, message_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, "") catch |err| {
+    _ = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch |err| {
         std.debug.print("ms-mcp: delete-channel-message failed: {}\n", .{err});
         sendToolError(ctx, "Failed to delete channel message.");
         return;
@@ -530,7 +530,7 @@ pub fn handleDeleteChannelReply(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/replies/{s}/softDelete", .{ team_id, channel_id, message_id, reply_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, "") catch |err| {
+    _ = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch |err| {
         std.debug.print("ms-mcp: delete-channel-reply failed: {}\n", .{err});
         sendToolError(ctx, "Failed to delete channel reply.");
         return;
