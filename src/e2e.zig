@@ -30,13 +30,14 @@ const McpClient = struct {
     write_buf: [65536]u8 = undefined,
 
     /// Spawn the MCP server and set up pipes.
-    fn init(allocator: Allocator, io: Io, exe_path: []const u8) !McpClient {
+    fn init(allocator: Allocator, io: Io, exe_path: []const u8, environ_map: ?*const std.process.Environ.Map) !McpClient {
         var client: McpClient = .{
             .child = try std.process.spawn(io, .{
                 .argv = &.{exe_path},
                 .stdin = .pipe,
                 .stdout = .pipe,
                 .stderr = .inherit, // Let server stderr pass through for debug logging.
+                .environ_map = environ_map,
             }),
             .file_reader = undefined,
             .file_writer = undefined,
@@ -169,27 +170,23 @@ fn testInitialize(client: *McpClient) !void {
     }
 }
 
-/// Test: Verify login (checks if we have a saved token).
+/// Test: Check if we're already authenticated by calling get-profile.
+/// If it returns a displayName, we have a valid token from a saved session.
 /// Returns true if authenticated.
-fn testVerifyLogin(client: *McpClient) !bool {
-    const parsed = try client.callTool("verify-login", null);
+fn testCheckAuth(client: *McpClient) !bool {
+    const parsed = try client.callTool("get-profile", null);
     defer parsed.deinit();
 
     const text = McpClient.getResultText(parsed) orelse {
-        fail("verify-login", "no text in response");
         return false;
     };
 
-    if (std.mem.indexOf(u8, text, "Logged in") != null) {
-        pass("verify-login (already authenticated)");
+    if (std.mem.indexOf(u8, text, "\"displayName\"") != null) {
+        pass("auth (saved token valid)");
         return true;
-    } else if (std.mem.indexOf(u8, text, "Not logged in") != null) {
-        std.debug.print("  ⓘ Not authenticated — will attempt login\n", .{});
-        return false;
-    } else {
-        fail("verify-login", text);
-        return false;
     }
+    std.debug.print("  ⓘ No valid saved token — will attempt login\n", .{});
+    return false;
 }
 
 /// Test: Login via device code flow (interactive — requires user action).
@@ -222,10 +219,21 @@ fn testLogin(client: *McpClient) !bool {
         return false;
     };
 
-    if (std.mem.indexOf(u8, verify_text, "Logged in") != null) {
+    if (std.mem.indexOf(u8, verify_text, "Login successful") != null) {
         pass("login (device code flow)");
         return true;
     } else {
+        // Could also be authenticated if the token was saved — check with get-profile.
+        const profile = try client.callTool("get-profile", null);
+        defer profile.deinit();
+        const profile_text = McpClient.getResultText(profile) orelse {
+            fail("login", "could not verify auth after login");
+            return false;
+        };
+        if (std.mem.indexOf(u8, profile_text, "\"displayName\"") != null) {
+            pass("login (authenticated via saved token)");
+            return true;
+        }
         fail("login", "still not authenticated after login");
         return false;
     }
@@ -234,7 +242,14 @@ fn testLogin(client: *McpClient) !bool {
 /// Test: Email draft lifecycle — create, verify, delete.
 fn testDraftLifecycle(client: *McpClient) !void {
     // Create a draft.
-    const create = try client.callTool("create-draft", "{\"to\":[\"e2e-test@example.com\"],\"subject\":\"[E2E TEST] Draft lifecycle test\",\"body\":\"This draft was created by the e2e test suite and should be deleted.\"}");
+    // Use E2E_TEST_EMAIL env var for the draft recipient, fallback to a safe default.
+    const test_email = if (std.c.getenv("E2E_TEST_EMAIL")) |ptr| std.mem.span(ptr) else "e2e-test@example.com";
+    var draft_args_buf: [1024]u8 = undefined;
+    const draft_args = std.fmt.bufPrint(&draft_args_buf, "{{\"to\":[\"{s}\"],\"subject\":\"[E2E TEST] Draft lifecycle test\",\"body\":\"This draft was created by the e2e test suite and should be deleted.\"}}", .{test_email}) catch {
+        fail("create-draft", "failed to build args");
+        return;
+    };
+    const create = try client.callTool("create-draft", draft_args);
     defer create.deinit();
 
     const create_text = McpClient.getResultText(create) orelse {
@@ -242,8 +257,9 @@ fn testDraftLifecycle(client: *McpClient) !void {
         return;
     };
 
-    // Extract the draft ID from the response JSON.
-    const draft_id = extractId(client.allocator, create_text) orelse {
+    // The response is "Draft created successfully. Draft ID: <id>"
+    const draft_id = extractAfterMarker(client.allocator, create_text, "Draft ID: ") orelse
+        extractId(client.allocator, create_text) orelse {
         fail("create-draft", "could not extract draft id from response");
         return;
     };
@@ -285,6 +301,8 @@ fn testCalendarLifecycle(client: *McpClient) !void {
     };
 
     const event_id = extractId(client.allocator, create_text) orelse {
+        const preview_len = @min(create_text.len, 200);
+        std.debug.print("  DEBUG create-calendar-event response: {s}...\n", .{create_text[0..preview_len]});
         fail("create-calendar-event", "could not extract event id");
         return;
     };
@@ -426,18 +444,79 @@ fn testSearchUsers(client: *McpClient) !void {
 
 // --- Helpers ---
 
-/// Extract an "id" field from a JSON response body string.
-/// Graph API responses include "id":"<some-guid>" for created resources.
+/// Extract a value that appears after a text marker, ending at newline or end of string.
+/// e.g. extractAfterMarker("Draft ID: ABC123\n", "Draft ID: ") => "ABC123"
+fn extractAfterMarker(allocator: Allocator, text: []const u8, marker: []const u8) ?[]u8 {
+    const start_idx = std.mem.indexOf(u8, text, marker) orelse return null;
+    const val_start = start_idx + marker.len;
+    const val_end = std.mem.indexOfPos(u8, text, val_start, "\n") orelse text.len;
+    if (val_start >= val_end) return null;
+    return allocator.dupe(u8, text[val_start..val_end]) catch return null;
+}
+
+/// Extract the top-level "id" field from a JSON response body string.
+/// Parses the JSON properly to avoid matching "parentFolderId" etc.
 fn extractId(allocator: Allocator, json_text: []const u8) ?[]u8 {
-    // Look for "id":"..." in the response.
-    const marker = "\"id\":\"";
-    const start_idx = std.mem.indexOf(u8, json_text, marker) orelse return null;
-    const id_start = start_idx + marker.len;
-    const id_end = std.mem.indexOfPos(u8, json_text, id_start, "\"") orelse return null;
-    return allocator.dupe(u8, json_text[id_start..id_end]) catch return null;
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_text, .{}) catch return null;
+    defer parsed.deinit();
+    const obj = switch (parsed.value) {
+        .object => |o| o,
+        else => return null,
+    };
+    const id_val = obj.get("id") orelse return null;
+    const id_str = switch (id_val) {
+        .string => |s| s,
+        else => return null,
+    };
+    return allocator.dupe(u8, id_str) catch return null;
 }
 
 // --- Main ---
+
+/// Read the .mcp.json config file and build an Environ.Map with
+/// MS365_CLIENT_ID and MS365_TENANT_ID for the child process.
+fn loadMcpConfig(allocator: Allocator, io: Io) !std.process.Environ.Map {
+    const data = std.Io.Dir.readFileAlloc(.cwd(), io, ".mcp.json", allocator, .unlimited) catch {
+        return error.NoMcpConfig;
+    };
+    defer allocator.free(data);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, data, .{});
+    defer parsed.deinit();
+
+    // Navigate: mcpServers -> ms365 -> env -> MS365_CLIENT_ID / MS365_TENANT_ID
+    const servers = switch (parsed.value.object.get("mcpServers") orelse return error.InvalidConfig) {
+        .object => |o| o,
+        else => return error.InvalidConfig,
+    };
+    const ms365 = switch (servers.get("ms365") orelse return error.InvalidConfig) {
+        .object => |o| o,
+        else => return error.InvalidConfig,
+    };
+    const env_obj = switch (ms365.get("env") orelse return error.InvalidConfig) {
+        .object => |o| o,
+        else => return error.InvalidConfig,
+    };
+
+    const client_id = switch (env_obj.get("MS365_CLIENT_ID") orelse return error.InvalidConfig) {
+        .string => |s| s,
+        else => return error.InvalidConfig,
+    };
+    const tenant_id = switch (env_obj.get("MS365_TENANT_ID") orelse return error.InvalidConfig) {
+        .string => |s| s,
+        else => return error.InvalidConfig,
+    };
+
+    // Build an Environ.Map with just these two vars + HOME (needed for token file).
+    var env_map = std.process.Environ.Map.init(allocator);
+    try env_map.put("MS365_CLIENT_ID", client_id);
+    try env_map.put("MS365_TENANT_ID", tenant_id);
+    // Pass HOME so the server can find/save the token file.
+    if (std.c.getenv("HOME")) |home| {
+        try env_map.put("HOME", std.mem.span(home));
+    }
+    return env_map;
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -448,13 +527,20 @@ pub fn main() !void {
     var threaded_io = std.Io.Threaded.init(allocator, .{});
     const io = threaded_io.io();
 
+    // Load env vars from .mcp.json to pass to the child server process.
+    var env_map = loadMcpConfig(allocator, io) catch {
+        std.debug.print("Error: could not read .mcp.json for MS365_CLIENT_ID/MS365_TENANT_ID.\n", .{});
+        return;
+    };
+    defer env_map.deinit();
+
     // Build the absolute path to the MCP server binary.
     const exe_path = "zig-out/bin/ms-mcp";
 
     std.debug.print("\n\x1b[1m── ms-mcp End-to-End Tests ──\x1b[0m\n\n", .{});
 
-    // Spawn the server.
-    var client = McpClient.init(allocator, io, exe_path) catch |err| {
+    // Spawn the server with the env vars.
+    var client = McpClient.init(allocator, io, exe_path, &env_map) catch |err| {
         std.debug.print("Failed to spawn server: {}\n", .{err});
         return err;
     };
@@ -466,7 +552,7 @@ pub fn main() !void {
 
     // --- Authentication ---
     std.debug.print("\n\x1b[1mAuthentication:\x1b[0m\n", .{});
-    var authenticated = try testVerifyLogin(&client);
+    var authenticated = try testCheckAuth(&client);
     if (!authenticated) {
         authenticated = try testLogin(&client);
     }
