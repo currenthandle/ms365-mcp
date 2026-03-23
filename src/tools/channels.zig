@@ -385,6 +385,7 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
     } else {
         // No mentions — send as HTML so URLs become clickable hyperlinks.
         const html_content = types.htmlAutoLink(ctx.allocator, message) orelse message;
+        defer if (html_content.ptr != message.ptr) ctx.allocator.free(html_content);
         const body = types.ChatMessageRequest{
             .body = .{ .content = html_content },
         };
@@ -492,11 +493,12 @@ pub fn handleDeleteChannelMessage(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/softDelete", .{ team_id, channel_id, message_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch |err| {
+    const soft_del_response = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch |err| {
         std.debug.print("ms-mcp: delete-channel-message failed: {}\n", .{err});
         sendToolError(ctx, "Failed to delete channel message.");
         return;
     };
+    defer ctx.allocator.free(soft_del_response);
 
     sendToolResult(ctx, "Channel message deleted.");
 }
@@ -530,11 +532,12 @@ pub fn handleDeleteChannelReply(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/replies/{s}/softDelete", .{ team_id, channel_id, message_id, reply_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch |err| {
+    const soft_del_response = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch |err| {
         std.debug.print("ms-mcp: delete-channel-reply failed: {}\n", .{err});
         sendToolError(ctx, "Failed to delete channel reply.");
         return;
     };
+    defer ctx.allocator.free(soft_del_response);
 
     sendToolResult(ctx, "Channel reply deleted.");
 }

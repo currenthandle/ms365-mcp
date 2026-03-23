@@ -258,6 +258,8 @@ pub fn handleSendChatMessage(ctx: ToolContext) void {
     // Build the request body using a typed struct.
     // Send as HTML so URLs become clickable hyperlinks.
     const html_content = types.htmlAutoLink(ctx.allocator, message) orelse message;
+    defer if (html_content.ptr != message.ptr) ctx.allocator.free(html_content);
+
     const chat_msg = types.ChatMessageRequest{
         .body = .{ .content = html_content },
     };
@@ -269,7 +271,7 @@ pub fn handleSendChatMessage(ctx: ToolContext) void {
     const json_body = json_buf.written();
 
     // POST the message.
-    _ = graph.post(ctx.allocator, ctx.io, token, path, json_body) catch |err| {
+    const response_body = graph.post(ctx.allocator, ctx.io, token, path, json_body) catch |err| {
         std.debug.print("ms-mcp: send-chat-message failed: {}\n", .{err});
         const content: []const types.TextContent = &.{
             .{ .text = "Failed to send chat message." },
@@ -281,6 +283,7 @@ pub fn handleSendChatMessage(ctx: ToolContext) void {
         });
         return;
     };
+    defer ctx.allocator.free(response_body);
 
     // Success!
     const content: []const types.TextContent = &.{
@@ -402,11 +405,12 @@ pub fn handleDeleteChatMessage(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/chats/{s}/messages/{s}/softDelete", .{ chat_id, message_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch |err| {
+    const soft_del_response = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch |err| {
         std.debug.print("ms-mcp: delete-chat-message failed: {}\n", .{err});
         sendResult(ctx, "Failed to delete chat message.");
         return;
     };
+    defer ctx.allocator.free(soft_del_response);
 
     sendResult(ctx, "Chat message deleted.");
 }

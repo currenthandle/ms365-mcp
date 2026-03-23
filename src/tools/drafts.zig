@@ -174,7 +174,7 @@ pub fn handleSendDraft(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}/send", .{draft_id}) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, null) catch |err| {
+    const send_response = graph.post(ctx.allocator, ctx.io, token, path, null) catch |err| {
         std.debug.print("ms-mcp: send-draft failed: {}\n", .{err});
         const content: []const types.TextContent = &.{
             .{ .text = "Failed to send draft." },
@@ -186,6 +186,7 @@ pub fn handleSendDraft(ctx: ToolContext) void {
         });
         return;
     };
+    defer ctx.allocator.free(send_response);
 
     const content: []const types.TextContent = &.{
         .{ .text = "Draft sent successfully." },
@@ -304,7 +305,7 @@ pub fn handleUpdateDraft(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}", .{draft_id}) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.patch(ctx.allocator, ctx.io, token, path, json_body) catch |err| {
+    const patch_response = graph.patch(ctx.allocator, ctx.io, token, path, json_body) catch |err| {
         std.debug.print("ms-mcp: update-draft failed: {}\n", .{err});
         const content: []const types.TextContent = &.{
             .{ .text = "Failed to update draft." },
@@ -316,6 +317,7 @@ pub fn handleUpdateDraft(ctx: ToolContext) void {
         });
         return;
     };
+    defer ctx.allocator.free(patch_response);
 
     const content: []const types.TextContent = &.{
         .{ .text = "Draft updated successfully." },

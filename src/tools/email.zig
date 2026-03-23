@@ -238,7 +238,7 @@ pub fn handleSendEmail(ctx: ToolContext) void {
     const json_body = json_buf.written();
 
     // Send the email via Graph API.
-    _ = graph.post(ctx.allocator, ctx.io, token, "/me/sendMail", json_body) catch |err| {
+    const send_response = graph.post(ctx.allocator, ctx.io, token, "/me/sendMail", json_body) catch |err| {
         std.debug.print("ms-mcp: send-email failed: {}\n", .{err});
         const content: []const types.TextContent = &.{
             .{ .text = "Failed to send email." },
@@ -250,6 +250,7 @@ pub fn handleSendEmail(ctx: ToolContext) void {
         });
         return;
     };
+    defer ctx.allocator.free(send_response);
 
     // Success!
     const content: []const types.TextContent = &.{
