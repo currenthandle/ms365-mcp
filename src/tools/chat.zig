@@ -399,7 +399,7 @@ pub fn handleDeleteChatMessage(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/chats/{s}/messages/{s}/softDelete", .{ chat_id, message_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, null) catch |err| {
+    _ = graph.post(ctx.allocator, ctx.io, token, path, "") catch |err| {
         std.debug.print("ms-mcp: delete-chat-message failed: {}\n", .{err});
         sendResult(ctx, "Failed to delete chat message.");
         return;

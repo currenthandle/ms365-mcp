@@ -9,6 +9,9 @@
 // If not already authenticated, prompts the user to complete device code auth.
 
 const std = @import("std");
+const c = @cImport({
+    @cInclude("stdlib.h");
+});
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -891,6 +894,25 @@ fn loadMcpConfig(allocator: Allocator, io: Io) !std.process.Environ.Map {
     return env_map;
 }
 
+/// Load a .env file and set each KEY=VALUE as an environment variable.
+fn loadDotEnv(allocator: Allocator, io: Io) void {
+    const data = std.Io.Dir.readFileAlloc(.cwd(), io, ".env", allocator, .unlimited) catch return;
+    defer allocator.free(data);
+
+    var it = std.mem.splitScalar(u8, data, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0 or line[0] == '#') continue;
+        const eq_idx = std.mem.indexOf(u8, line, "=") orelse continue;
+        const key = line[0..eq_idx];
+        const value = line[eq_idx + 1 ..];
+        // Dupe as null-terminated for setenv.
+        const key_z = allocator.dupeZ(u8, key) catch continue;
+        const val_z = allocator.dupeZ(u8, value) catch continue;
+        // Intentionally leaked — env vars must outlive the process.
+        _ = c.setenv(key_z.ptr, val_z.ptr, 0); // 0 = don't overwrite existing
+    }
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -899,6 +921,9 @@ pub fn main() !void {
     // Create threaded I/O context (required for process spawning + networking).
     var threaded_io = std.Io.Threaded.init(allocator, .{});
     const io = threaded_io.io();
+
+    // Load .env file (won't overwrite existing env vars).
+    loadDotEnv(allocator, io);
 
     // Load env vars from .mcp.json to pass to the child server process.
     var env_map = loadMcpConfig(allocator, io) catch {
