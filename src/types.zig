@@ -118,9 +118,23 @@ pub const ChatMessageRequest = struct {
     };
 };
 
+/// Write a string with HTML special characters escaped.
+fn writeHtmlEscaped(w: *std.Io.Writer, text: []const u8) void {
+    for (text) |ch| {
+        switch (ch) {
+            '<' => w.writeAll("&lt;") catch return,
+            '>' => w.writeAll("&gt;") catch return,
+            '&' => w.writeAll("&amp;") catch return,
+            '"' => w.writeAll("&quot;") catch return,
+            else => w.writeByte(ch) catch return,
+        }
+    }
+}
+
 /// Convert plain text to HTML suitable for Teams/chat messages.
 /// Wraps bare URLs (http:// and https://) in <a> tags so they render
 /// as clickable hyperlinks, and converts newlines to <br> tags.
+/// HTML-escapes all text to prevent injection attacks.
 pub fn htmlAutoLink(allocator: std.mem.Allocator, text: []const u8) ?[]u8 {
     var buf: std.Io.Writer.Allocating = .init(allocator);
     const w = &buf.writer;
@@ -144,12 +158,24 @@ pub fn htmlAutoLink(allocator: std.mem.Allocator, text: []const u8) ?[]u8 {
                 text[i] != '\n' and text[i] != '\r') : (i += 1)
             {}
             const url = text[url_start..i];
-            w.print("<a href=\"{s}\">{s}</a>", .{ url, url }) catch return null;
+            // HTML-escape the URL in both href and display text to prevent
+            // attribute breakout via " characters.
+            w.writeAll("<a href=\"") catch return null;
+            writeHtmlEscaped(w, url);
+            w.writeAll("\">") catch return null;
+            writeHtmlEscaped(w, url);
+            w.writeAll("</a>") catch return null;
             continue;
         }
 
-        // Regular character — pass through.
-        w.writeByte(text[i]) catch return null;
+        // Regular character — HTML-escape to prevent injection.
+        switch (text[i]) {
+            '<' => w.writeAll("&lt;") catch return null,
+            '>' => w.writeAll("&gt;") catch return null,
+            '&' => w.writeAll("&amp;") catch return null,
+            '"' => w.writeAll("&quot;") catch return null,
+            else => w.writeByte(text[i]) catch return null,
+        }
         i += 1;
     }
 
@@ -244,17 +270,21 @@ test "htmlAutoLink URL at end of string" {
     try testing.expectEqualStrings("link: <a href=\"https://x.com\">https://x.com</a>", result);
 }
 
-test "htmlAutoLink SECURITY: script tags pass through unescaped" {
-    // Documents HTML injection vulnerability — angle brackets are not escaped.
+test "htmlAutoLink escapes script tags" {
     const result = htmlAutoLink(testing.allocator, "<script>alert(1)</script>").?;
     defer testing.allocator.free(result);
-    try testing.expectEqualStrings("<script>alert(1)</script>", result);
+    try testing.expectEqualStrings("&lt;script&gt;alert(1)&lt;/script&gt;", result);
 }
 
-test "htmlAutoLink SECURITY: quote in URL breaks href attribute" {
-    // Documents href attribute breakout — quotes in URLs are not escaped.
+test "htmlAutoLink escapes quotes in URLs" {
     const result = htmlAutoLink(testing.allocator, "https://evil.com/\"onmouseover=\"alert(1)").?;
     defer testing.allocator.free(result);
-    // The " in the URL will break out of the href attribute.
-    try testing.expectEqualStrings("<a href=\"https://evil.com/\"onmouseover=\"alert(1)\">https://evil.com/\"onmouseover=\"alert(1)</a>", result);
+    // Quotes are escaped to &quot; preventing href attribute breakout.
+    try testing.expectEqualStrings("<a href=\"https://evil.com/&quot;onmouseover=&quot;alert(1)\">https://evil.com/&quot;onmouseover=&quot;alert(1)</a>", result);
+}
+
+test "htmlAutoLink escapes ampersands" {
+    const result = htmlAutoLink(testing.allocator, "a&b<c>d").?;
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("a&amp;b&lt;c&gt;d", result);
 }
