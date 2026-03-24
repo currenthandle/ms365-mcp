@@ -170,11 +170,12 @@ pub fn handleSendDraft(ctx: ToolContext) void {
         return;
     };
 
-    // POST /me/messages/{id}/send — sends the draft, no body needed.
+    // POST /me/messages/{id}/send — sends the draft.
+    // Empty JSON body required — Zig's HTTP client asserts on POST with null payload.
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}/send", .{draft_id}) catch return;
     defer ctx.allocator.free(path);
 
-    const send_response = graph.post(ctx.allocator, ctx.io, token, path, null) catch |err| {
+    const send_response = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch |err| {
         std.debug.print("ms-mcp: send-draft failed: {}\n", .{err});
         const content: []const types.TextContent = &.{
             .{ .text = "Failed to send draft." },
