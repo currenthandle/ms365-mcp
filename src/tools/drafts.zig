@@ -425,6 +425,21 @@ pub fn handleAddAttachment(ctx: ToolContext) void {
         return;
     };
 
+    // Reject paths with ".." to prevent directory traversal attacks.
+    // An attacker via prompt injection could try to exfiltrate sensitive files
+    // like ~/.ms365-zig-mcp-token.json or SSH keys.
+    if (std.mem.indexOf(u8, file_path, "..") != null) {
+        const content: []const types.TextContent = &.{
+            .{ .text = "Invalid file path — '..' is not allowed." },
+        };
+        const result = types.ToolCallResult{ .content = content };
+        json_rpc.sendJsonResponse(ctx.writer, types.JsonRpcResponse(types.ToolCallResult){
+            .id = json_rpc.getRequestId(ctx.parsed),
+            .result = result,
+        });
+        return;
+    }
+
     // Read the file from disk (up to 10 MB).
     const file_data = std.Io.Dir.readFileAlloc(.cwd(), ctx.io, file_path, ctx.allocator, .unlimited) catch |err| {
         std.debug.print("ms-mcp: add-attachment read file failed: {}\n", .{err});
