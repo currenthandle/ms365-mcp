@@ -599,20 +599,43 @@ fn testCalendarWithAttendees(client: *McpClient) !void {
 
 /// Test: Chat message lifecycle — send message, verify, soft-delete.
 fn testChatMessageLifecycle(client: *McpClient) !void {
-    // List chats to find one to test with.
-    const list = try client.callTool("list-chats", "{\"top\":\"1\"}");
-    defer list.deinit();
-    const list_text = McpClient.getResultText(list) orelse {
-        fail("send-chat-message", "could not list chats");
+    // Get the test recipient from env (defaults to E2E_ATTENDEE_REQUIRED).
+    const chat_recipient = if (std.c.getenv("E2E_ATTENDEE_REQUIRED")) |ptr| std.mem.span(ptr) else {
+        std.debug.print("  ⓘ Skipping chat-message (E2E_ATTENDEE_REQUIRED not set)\n", .{});
         return;
     };
 
-    // Extract the first chat ID from the condensed format: "— id: <chatId>"
-    const chat_id = extractAfterMarker(client.allocator, list_text, "— id: ") orelse {
-        fail("send-chat-message", "could not find a chat id");
+    // Get the logged-in user's email from their profile.
+    const profile = try client.callTool("get-profile", null);
+    defer profile.deinit();
+    const profile_text = McpClient.getResultText(profile) orelse {
+        fail("send-chat-message", "could not get profile");
+        return;
+    };
+    const my_email = extractJsonString(client.allocator, profile_text, "mail") orelse
+        extractJsonString(client.allocator, profile_text, "userPrincipalName") orelse {
+        fail("send-chat-message", "could not extract email from profile");
+        return;
+    };
+    defer client.allocator.free(my_email);
+
+    // Create or find a 1:1 chat with the recipient.
+    var create_chat_buf: [1024]u8 = undefined;
+    const create_chat_args = std.fmt.bufPrint(&create_chat_buf, "{{\"emailOne\":\"{s}\",\"emailTwo\":\"{s}\"}}", .{ my_email, chat_recipient }) catch return;
+    const create_chat = try client.callTool("create-chat", create_chat_args);
+    defer create_chat.deinit();
+    const create_chat_text = McpClient.getResultText(create_chat) orelse {
+        fail("send-chat-message", "could not create chat");
+        return;
+    };
+
+    // Extract the chat ID from the response.
+    const chat_id = extractJsonString(client.allocator, create_chat_text, "id") orelse {
+        fail("send-chat-message", "could not extract chat id");
         return;
     };
     defer client.allocator.free(chat_id);
+    pass("create-chat (for chat message test)");
 
     // Send a test message.
     var send_buf: [1024]u8 = undefined;
@@ -821,6 +844,22 @@ fn findMessageByContent(allocator: Allocator, json_text: []const u8, content_fra
         }
     }
     return null;
+}
+
+/// Extract a top-level string field from a JSON response body string.
+fn extractJsonString(allocator: Allocator, json_text: []const u8, key: []const u8) ?[]u8 {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_text, .{}) catch return null;
+    defer parsed.deinit();
+    const obj = switch (parsed.value) {
+        .object => |o| o,
+        else => return null,
+    };
+    const val = obj.get(key) orelse return null;
+    const str = switch (val) {
+        .string => |s| s,
+        else => return null,
+    };
+    return allocator.dupe(u8, str) catch return null;
 }
 
 /// Extract the top-level "id" field from a JSON response body string.
