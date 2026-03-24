@@ -4,50 +4,25 @@ A lightweight Microsoft 365 MCP server written in Zig. ~4.6k lines of code, ~5.7
 
 Exposes Microsoft Graph API functionality — Teams, Outlook, and Calendar — as MCP tools for use with LLM agents.
 
-## Tools
+## Install
 
-**Email** — list-emails, read-email, send-email, create-draft, send-draft, update-draft, delete-draft, add-attachment, list-attachments, remove-attachment
+```sh
+curl -fsSL https://raw.githubusercontent.com/currenthandle/ms365-mcp/main/install.sh | sh
+```
 
-**Calendar** — list-calendar-events, get-calendar-event, create-calendar-event, update-calendar-event, delete-calendar-event
-
-**Teams Chat** — list-chats, list-chat-messages, send-chat-message, create-chat
-
-**Teams Channels** — list-teams, list-channels, list-channel-messages, get-channel-message-replies, reply-to-channel-message
-
-**Users** — search-users, get-profile, get-mailbox-settings
-
-**Auth** — login, verify-login, sync-timezone
+This downloads the right binary for your platform (macOS/Linux, ARM64/x86_64) to `~/.local/bin/ms-mcp`.
 
 ## Setup
 
-Requires a Microsoft Entra app registration with delegated permissions for the Graph API scopes you need.
+1. Create a [Microsoft Entra app registration](https://entra.microsoft.com/) with delegated permissions for the Graph API scopes you need.
 
-Set environment variables:
-
-```sh
-export MS365_CLIENT_ID="your-client-id"
-export MS365_TENANT_ID="your-tenant-id"
-```
-
-## Build
-
-Requires [Zig](https://ziglang.org/) `0.16.0-dev.2736+3b515fbed` (nightly).
-
-```sh
-zig build
-```
-
-Binary outputs to `zig-out/bin/ms-mcp`.
-
-## Usage
-
-Add to your MCP client config:
+2. Add to your MCP client config (`.mcp.json`, Claude Desktop, etc.):
 
 ```json
 {
   "mcpServers": {
     "ms365": {
-      "command": "/path/to/ms-mcp",
+      "command": "$HOME/.local/bin/ms-mcp",
       "env": {
         "MS365_CLIENT_ID": "your-client-id",
         "MS365_TENANT_ID": "your-tenant-id"
@@ -57,4 +32,32 @@ Add to your MCP client config:
 }
 ```
 
-The server authenticates via OAuth device code flow — the LLM will call `login` and prompt you to visit a URL.
+3. The server authenticates via OAuth device code flow — the LLM will call `login` and prompt you to visit a URL.
+
+## Tools
+
+**Email** — list-emails, read-email, send-email, delete-email, create-draft, send-draft, update-draft, delete-draft, add-attachment, list-attachments, remove-attachment
+
+**Calendar** — list-calendar-events, get-calendar-event, create-calendar-event, update-calendar-event, delete-calendar-event
+
+**Teams Chat** — list-chats, list-chat-messages, send-chat-message, create-chat, delete-chat-message
+
+**Teams Channels** — list-teams, list-channels, list-channel-messages, get-channel-message-replies, reply-to-channel-message, delete-channel-message, delete-channel-reply
+
+**Users** — search-users, get-profile, get-mailbox-settings
+
+**Auth** — login, verify-login, sync-timezone
+
+## Build from source
+
+Requires [Zig](https://ziglang.org/) `0.16.0-dev.2736+3b515fbed` (nightly).
+
+```sh
+zig build -Doptimize=ReleaseSafe
+```
+
+Run tests:
+
+```sh
+zig build test
+```
