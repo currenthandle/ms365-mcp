@@ -45,7 +45,10 @@ pub fn handleListChatMessages(ctx: ToolContext) void {
     // If pageToken is provided, use it directly (it's a full @odata.nextLink URL).
     const page_token = json_rpc.getStringArg(args, "pageToken");
     const path = if (page_token) |pt| blk: {
-        break :blk graph.stripGraphPrefix(pt);
+        break :blk graph.stripGraphPrefix(pt) orelse {
+            sendResult(ctx, "Invalid pageToken — must be a Graph API URL.");
+            return;
+        };
     } else blk: {
         const chat_id = json_rpc.getStringArg(args, "chatId") orelse {
             sendResult(ctx, "Missing 'chatId' argument.");
@@ -83,7 +86,10 @@ pub fn handleListChats(ctx: ToolContext) void {
     const page_token = if (args) |a| json_rpc.getStringArg(a, "pageToken") else null;
 
     const path = if (page_token) |pt| blk: {
-        break :blk graph.stripGraphPrefix(pt);
+        break :blk graph.stripGraphPrefix(pt) orelse {
+            sendResult(ctx, "Invalid pageToken — must be a Graph API URL.");
+            return;
+        };
     } else blk: {
         const top = if (args) |a| (json_rpc.getStringArg(a, "top") orelse "50") else "50";
         break :blk std.fmt.allocPrint(

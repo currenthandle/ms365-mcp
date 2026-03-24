@@ -144,9 +144,10 @@ pub fn handleListChannelMessages(ctx: ToolContext) void {
     // If pageToken is provided, use it directly as the full URL path.
     const page_token = json_rpc.getStringArg(args, "pageToken");
     const path = if (page_token) |pt| blk: {
-        // The nextLink is a full URL like "https://graph.microsoft.com/v1.0/teams/..."
-        // Strip the host prefix to get just the path + query string.
-        break :blk graph.stripGraphPrefix(pt);
+        break :blk graph.stripGraphPrefix(pt) orelse {
+            sendToolError(ctx, "Invalid pageToken — must be a Graph API URL.");
+            return;
+        };
     } else blk: {
         const team_id = json_rpc.getStringArg(args, "teamId") orelse {
             sendToolError(ctx, "Missing 'teamId' argument. Use list-teams to find it.");
@@ -193,7 +194,10 @@ pub fn handleGetChannelMessageReplies(ctx: ToolContext) void {
     // If pageToken is provided, use it directly as the full URL path.
     const page_token = json_rpc.getStringArg(args, "pageToken");
     const path = if (page_token) |pt| blk: {
-        break :blk graph.stripGraphPrefix(pt);
+        break :blk graph.stripGraphPrefix(pt) orelse {
+            sendToolError(ctx, "Invalid pageToken — must be a Graph API URL.");
+            return;
+        };
     } else blk: {
         const team_id = json_rpc.getStringArg(args, "teamId") orelse {
             sendToolError(ctx, "Missing 'teamId' argument.");

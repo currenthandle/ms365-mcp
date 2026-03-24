@@ -29,16 +29,22 @@ pub fn post(allocator: Allocator, io: Io, access_token: []const u8, path: []cons
     return request(allocator, io, access_token, .POST, path, json_body);
 }
 
-/// Strip the Graph API base URL prefix from a full URL.
+/// Strip the Graph API base URL prefix from a full URL and validate the path.
 /// The @odata.nextLink values are full URLs like
 /// "https://graph.microsoft.com/v1.0/teams/..." — this returns just the
 /// path portion "/teams/..." so it can be passed to our get() function.
-/// If the prefix isn't found, returns the input unchanged.
-pub fn stripGraphPrefix(url: []const u8) []const u8 {
-    if (std.mem.startsWith(u8, url, base_url)) {
-        return url[base_url.len..];
-    }
-    return url;
+/// Returns null if the result is not a valid relative path starting with "/".
+/// This prevents SSRF attacks where a crafted pageToken like
+/// "https://graph.microsoft.com/v1.0@attacker.com/..." could redirect
+/// requests (and the OAuth token) to an attacker-controlled host.
+pub fn stripGraphPrefix(url: []const u8) ?[]const u8 {
+    const path = if (std.mem.startsWith(u8, url, base_url))
+        url[base_url.len..]
+    else
+        url;
+    // Must start with "/" to be a valid Graph API path.
+    if (path.len == 0 or path[0] != '/') return null;
+    return path;
 }
 
 /// Make an authenticated GET request with an additional Prefer header.
@@ -188,24 +194,23 @@ fn request(
 const testing = std.testing;
 
 test "stripGraphPrefix removes base URL" {
-    const result = stripGraphPrefix("https://graph.microsoft.com/v1.0/teams/abc");
-    try testing.expectEqualStrings("/teams/abc", result);
+    try testing.expectEqualStrings("/teams/abc", stripGraphPrefix("https://graph.microsoft.com/v1.0/teams/abc").?);
 }
 
 test "stripGraphPrefix relative path unchanged" {
-    const result = stripGraphPrefix("/me/messages");
-    try testing.expectEqualStrings("/me/messages", result);
+    try testing.expectEqualStrings("/me/messages", stripGraphPrefix("/me/messages").?);
 }
 
-test "stripGraphPrefix empty string" {
-    const result = stripGraphPrefix("");
-    try testing.expectEqualStrings("", result);
+test "stripGraphPrefix empty string returns null" {
+    try testing.expect(stripGraphPrefix("") == null);
 }
 
-test "stripGraphPrefix SSRF: @-sign after prefix strips to unsafe path" {
-    // Documents the SSRF vulnerability: a crafted nextLink like
-    // "https://graph.microsoft.com/v1.0@evil.com/x" strips to "@evil.com/x"
-    // which does NOT start with "/" — this should be validated by callers.
-    const result = stripGraphPrefix("https://graph.microsoft.com/v1.0@evil.com/x");
-    try testing.expectEqualStrings("@evil.com/x", result);
+test "stripGraphPrefix SSRF: @-sign after prefix returns null" {
+    // A crafted nextLink like "https://graph.microsoft.com/v1.0@evil.com/x"
+    // strips to "@evil.com/x" which doesn't start with "/" — rejected as null.
+    try testing.expect(stripGraphPrefix("https://graph.microsoft.com/v1.0@evil.com/x") == null);
+}
+
+test "stripGraphPrefix SSRF: different host returns null" {
+    try testing.expect(stripGraphPrefix("https://evil.com/steal") == null);
 }
