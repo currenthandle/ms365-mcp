@@ -372,12 +372,13 @@ pub fn saveToken(
     );
     defer allocator.free(json);
 
-    // Write the file. Dir.cwd() gives the current working directory handle,
-    // but we use an absolute path so the cwd doesn't matter.
-    // writeFile creates the file if it doesn't exist, or overwrites it.
+    // Write the file with 0600 permissions (owner read/write only).
+    // The token file contains access_token and refresh_token — if world-readable,
+    // any local user could steal the tokens and access the M365 account.
     try std.Io.Dir.writeFile(.cwd(), io, .{
         .sub_path = path,
         .data = json,
+        .flags = .{ .permissions = @enumFromInt(0o600) },
     });
 
     std.debug.print("ms-mcp: token saved to {s}\n", .{path});
