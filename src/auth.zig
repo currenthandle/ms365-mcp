@@ -363,13 +363,16 @@ pub fn saveToken(
     const now_secs = std.Io.Timestamp.now(io, .real).toSeconds();
     const expires_at = now_secs + expires_in;
 
-    // Build the JSON string to write.
-    // We write it manually since we just have three fields.
-    const json = try std.fmt.allocPrint(
-        allocator,
-        "{{\"access_token\":\"{s}\",\"refresh_token\":\"{s}\",\"expires_at\":{d}}}",
-        .{ access_token, refresh_token, expires_at },
-    );
+    // Build the JSON string using proper encoding to safely handle
+    // any characters in token values (defense in depth).
+    var json_buf: std.Io.Writer.Allocating = .init(allocator);
+    const jw = &json_buf.writer;
+    jw.writeAll("{\"access_token\":") catch return error.OutOfMemory;
+    std.json.Stringify.encodeJsonString(access_token, .{}, jw) catch return error.OutOfMemory;
+    jw.writeAll(",\"refresh_token\":") catch return error.OutOfMemory;
+    std.json.Stringify.encodeJsonString(refresh_token, .{}, jw) catch return error.OutOfMemory;
+    jw.print(",\"expires_at\":{d}}}", .{expires_at}) catch return error.OutOfMemory;
+    const json = try json_buf.toOwnedSlice();
     defer allocator.free(json);
 
     // Write the file with 0600 permissions (owner read/write only).

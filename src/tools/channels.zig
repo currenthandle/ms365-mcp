@@ -357,7 +357,10 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
 
                     if (std.mem.startsWith(u8, after_at, info.name)) {
                         // Full name match: "@Rohit Sureka" → <at>Rohit Sureka</at>
-                        hw.print("<at id=\"{d}\">{s}</at>", .{ info.idx, info.name }) catch return;
+                        // HTML-escape the display name to prevent injection.
+                        hw.print("<at id=\"{d}\">", .{info.idx}) catch return;
+                        types.writeHtmlEscaped(hw, info.name);
+                        hw.writeAll("</at>") catch return;
                         remaining = after_at[info.name.len..];
                         matched = true;
                         break;
@@ -369,7 +372,10 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
                         if (end < after_at.len and std.ascii.isAlphabetic(after_at[end])) {
                             // Not a word boundary — skip.
                         } else {
-                            hw.print("<at id=\"{d}\">{s}</at>", .{ info.idx, info.name }) catch return;
+                            // HTML-escape the display name to prevent injection.
+                            hw.print("<at id=\"{d}\">", .{info.idx}) catch return;
+                            types.writeHtmlEscaped(hw, info.name);
+                            hw.writeAll("</at>") catch return;
                             remaining = after_at[first_name.len..];
                             matched = true;
                             break;
