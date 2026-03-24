@@ -214,3 +214,51 @@ test "stripGraphPrefix SSRF: @-sign after prefix returns null" {
 test "stripGraphPrefix SSRF: different host returns null" {
     try testing.expect(stripGraphPrefix("https://evil.com/steal") == null);
 }
+
+// --- Security: additional SSRF attack vectors ---
+
+test "stripGraphPrefix SSRF: double-slash protocol relative" {
+    try testing.expect(stripGraphPrefix("//evil.com/steal") == null);
+}
+
+test "stripGraphPrefix SSRF: backslash trick" {
+    try testing.expect(stripGraphPrefix("https://graph.microsoft.com/v1.0\\@evil.com") == null);
+}
+
+test "stripGraphPrefix SSRF: prefix without path" {
+    // Just the base URL with no trailing path — should return null since
+    // there's no "/" after the prefix.
+    try testing.expect(stripGraphPrefix("https://graph.microsoft.com/v1.0") == null);
+}
+
+test "stripGraphPrefix SSRF: empty after prefix" {
+    try testing.expect(stripGraphPrefix("https://graph.microsoft.com/v1.0") == null);
+}
+
+test "stripGraphPrefix SSRF: userinfo in URL" {
+    // "https://graph.microsoft.com/v1.0" is the prefix;
+    // after stripping, "user@evil.com/..." doesn't start with "/"
+    try testing.expect(stripGraphPrefix("https://graph.microsoft.com/v1.0user@evil.com/x") == null);
+}
+
+test "stripGraphPrefix valid deep path" {
+    try testing.expectEqualStrings(
+        "/teams/abc/channels/def/messages",
+        stripGraphPrefix("https://graph.microsoft.com/v1.0/teams/abc/channels/def/messages").?,
+    );
+}
+
+test "stripGraphPrefix valid path with query" {
+    try testing.expectEqualStrings(
+        "/me/chats?$top=50",
+        stripGraphPrefix("https://graph.microsoft.com/v1.0/me/chats?$top=50").?,
+    );
+}
+
+test "stripGraphPrefix SSRF: data URI" {
+    try testing.expect(stripGraphPrefix("data:text/html,<script>alert(1)</script>") == null);
+}
+
+test "stripGraphPrefix SSRF: ftp protocol" {
+    try testing.expect(stripGraphPrefix("ftp://evil.com/steal") == null);
+}

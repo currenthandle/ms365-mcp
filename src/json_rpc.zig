@@ -80,6 +80,36 @@ pub fn getStringArg(args: std.json.ObjectMap, key: []const u8) ?[]const u8 {
     };
 }
 
+/// Extract and validate a numeric "top" parameter for pagination.
+/// Returns a valid numeric string between 1 and 50, or the default "50".
+/// Rejects non-numeric values that could inject OData query parameters.
+pub fn getTopArg(args: std.json.ObjectMap) []const u8 {
+    const val = getStringArg(args, "top") orelse return "50";
+    // Validate it's a pure numeric string.
+    for (val) |c| {
+        if (c < '0' or c > '9') return "50";
+    }
+    if (val.len == 0 or val.len > 2) return "50";
+    // Parse and clamp to 1-50.
+    const n = std.fmt.parseInt(u32, val, 10) catch return "50";
+    if (n < 1 or n > 50) return "50";
+    return val;
+}
+
+/// Extract a string argument that will be used in a Graph API URL path segment.
+/// Rejects values containing '/', '?', '&', '#' to prevent path traversal
+/// and OData query injection attacks.
+pub fn getPathArg(args: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+    const val = getStringArg(args, key) orelse return null;
+    for (val) |c| {
+        switch (c) {
+            '/', '?', '&', '#' => return null,
+            else => {},
+        }
+    }
+    return val;
+}
+
 /// Serialize any Zig struct as JSON, write it to the writer, then flush.
 ///
 /// This is how we send every response back to the MCP client. Zig's
@@ -165,4 +195,120 @@ test "getStringArg missing key returns null" {
     defer parsed.deinit();
     const args = getToolArgs(parsed.value).?;
     try testing.expect(getStringArg(args, "missing") == null);
+}
+
+// --- Security: getPathArg tests ---
+
+test "getPathArg accepts valid ID" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"id\":\"AAMkAGNjY2ZhNjQ3\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expectEqualStrings("AAMkAGNjY2ZhNjQ3", getPathArg(args, "id").?);
+}
+
+test "getPathArg accepts GUID" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"id\":\"550e8400-e29b-41d4-a716-446655440000\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expectEqualStrings("550e8400-e29b-41d4-a716-446655440000", getPathArg(args, "id").?);
+}
+
+test "getPathArg rejects slash (path traversal)" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"id\":\"../../admin/users\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expect(getPathArg(args, "id") == null);
+}
+
+test "getPathArg rejects question mark (query injection)" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"id\":\"abc?$select=body\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expect(getPathArg(args, "id") == null);
+}
+
+test "getPathArg rejects ampersand (query injection)" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"id\":\"abc&$top=1000\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expect(getPathArg(args, "id") == null);
+}
+
+test "getPathArg rejects hash" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"id\":\"abc#fragment\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expect(getPathArg(args, "id") == null);
+}
+
+test "getPathArg missing key returns null" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expect(getPathArg(args, "id") == null);
+}
+
+// --- Security: getTopArg tests ---
+
+test "getTopArg valid number" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"top\":\"25\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expectEqualStrings("25", getTopArg(args));
+}
+
+test "getTopArg default when missing" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expectEqualStrings("50", getTopArg(args));
+}
+
+test "getTopArg rejects non-numeric (OData injection)" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"top\":\"10&$select=body\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expectEqualStrings("50", getTopArg(args));
+}
+
+test "getTopArg rejects zero" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"top\":\"0\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expectEqualStrings("50", getTopArg(args));
+}
+
+test "getTopArg rejects over 50" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"top\":\"999\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expectEqualStrings("50", getTopArg(args));
+}
+
+test "getTopArg rejects empty string" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"top\":\"\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expectEqualStrings("50", getTopArg(args));
+}
+
+test "getTopArg rejects negative" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"top\":\"-1\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expectEqualStrings("50", getTopArg(args));
+}
+
+test "getTopArg accepts boundary value 1" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"top\":\"1\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expectEqualStrings("1", getTopArg(args));
+}
+
+test "getTopArg accepts boundary value 50" {
+    var parsed = try parseTestJson("{\"params\":{\"arguments\":{\"top\":\"50\"}}}");
+    defer parsed.deinit();
+    const args = getToolArgs(parsed.value).?;
+    try testing.expectEqualStrings("50", getTopArg(args));
 }

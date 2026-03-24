@@ -70,7 +70,7 @@ pub fn handleGetCalendarEvent(ctx: ToolContext) void {
     };
 
     // "eventId" — the ID of the event to fetch (from list-calendar-events).
-    const event_id = json_rpc.getStringArg(args, "eventId") orelse {
+    const event_id = json_rpc.getPathArg(args, "eventId") orelse {
         const content: []const types.TextContent = &.{
             .{ .text = "Missing 'eventId' argument." },
         };
@@ -134,7 +134,7 @@ pub fn handleUpdateCalendarEvent(ctx: ToolContext) void {
     };
 
     // "eventId" — the ID of the event to update (required).
-    const event_id = json_rpc.getStringArg(args, "eventId") orelse {
+    const event_id = json_rpc.getPathArg(args, "eventId") orelse {
         const content: []const types.TextContent = &.{
             .{ .text = "Missing 'eventId' argument." },
         };
@@ -238,7 +238,7 @@ pub fn handleDeleteCalendarEvent(ctx: ToolContext) void {
     };
 
     // "eventId" — the ID of the event to delete (from list-calendar-events).
-    const event_id = json_rpc.getStringArg(args, "eventId") orelse {
+    const event_id = json_rpc.getPathArg(args, "eventId") orelse {
         const content: []const types.TextContent = &.{
             .{ .text = "Missing 'eventId' argument." },
         };

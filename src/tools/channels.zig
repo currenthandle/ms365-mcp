@@ -73,7 +73,7 @@ pub fn handleListChannels(ctx: ToolContext) void {
         sendToolError(ctx, "Missing arguments. Provide teamId.");
         return;
     };
-    const team_id = json_rpc.getStringArg(args, "teamId") orelse {
+    const team_id = json_rpc.getPathArg(args, "teamId") orelse {
         sendToolError(ctx, "Missing 'teamId' argument. Use list-teams to find it.");
         return;
     };
@@ -149,17 +149,17 @@ pub fn handleListChannelMessages(ctx: ToolContext) void {
             return;
         };
     } else blk: {
-        const team_id = json_rpc.getStringArg(args, "teamId") orelse {
+        const team_id = json_rpc.getPathArg(args, "teamId") orelse {
             sendToolError(ctx, "Missing 'teamId' argument. Use list-teams to find it.");
             return;
         };
-        const channel_id = json_rpc.getStringArg(args, "channelId") orelse {
+        const channel_id = json_rpc.getPathArg(args, "channelId") orelse {
             sendToolError(ctx, "Missing 'channelId' argument. Use list-channels to find it.");
             return;
         };
 
         // Default to 50 messages per page (Graph API max for channel messages).
-        const top = json_rpc.getStringArg(args, "top") orelse "50";
+        const top = json_rpc.getTopArg(args);
 
         break :blk std.fmt.allocPrint(
             ctx.allocator,
@@ -199,20 +199,20 @@ pub fn handleGetChannelMessageReplies(ctx: ToolContext) void {
             return;
         };
     } else blk: {
-        const team_id = json_rpc.getStringArg(args, "teamId") orelse {
+        const team_id = json_rpc.getPathArg(args, "teamId") orelse {
             sendToolError(ctx, "Missing 'teamId' argument.");
             return;
         };
-        const channel_id = json_rpc.getStringArg(args, "channelId") orelse {
+        const channel_id = json_rpc.getPathArg(args, "channelId") orelse {
             sendToolError(ctx, "Missing 'channelId' argument.");
             return;
         };
-        const message_id = json_rpc.getStringArg(args, "messageId") orelse {
+        const message_id = json_rpc.getPathArg(args, "messageId") orelse {
             sendToolError(ctx, "Missing 'messageId' argument. Use list-channel-messages to find it.");
             return;
         };
 
-        const top = json_rpc.getStringArg(args, "top") orelse "50";
+        const top = json_rpc.getTopArg(args);
 
         break :blk std.fmt.allocPrint(
             ctx.allocator,
@@ -243,15 +243,15 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
         sendToolError(ctx, "Missing arguments. Provide teamId, channelId, messageId, and message.");
         return;
     };
-    const team_id = json_rpc.getStringArg(args, "teamId") orelse {
+    const team_id = json_rpc.getPathArg(args, "teamId") orelse {
         sendToolError(ctx, "Missing 'teamId' argument.");
         return;
     };
-    const channel_id = json_rpc.getStringArg(args, "channelId") orelse {
+    const channel_id = json_rpc.getPathArg(args, "channelId") orelse {
         sendToolError(ctx, "Missing 'channelId' argument.");
         return;
     };
-    const message_id = json_rpc.getStringArg(args, "messageId") orelse {
+    const message_id = json_rpc.getPathArg(args, "messageId") orelse {
         sendToolError(ctx, "Missing 'messageId' argument.");
         return;
     };
@@ -316,10 +316,18 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
 
                 if (mention_idx > 0) mw.writeAll(",") catch return;
 
-                // Build mention JSON object.
-                mw.print(
-                    \\{{"id":{d},"mentionText":"{s}","mentioned":{{"user":{{"id":"{s}","displayName":"{s}","userIdentityType":"aadUser"}}}}}}
-                , .{ mention_idx, name, user_id, name }) catch return;
+                // Build mention JSON object with safe escaping.
+                // Use encodeJsonString to prevent JSON injection via
+                // crafted display names or user IDs containing quotes.
+                mw.writeAll("{\"id\":") catch return;
+                mw.print("{d}", .{mention_idx}) catch return;
+                mw.writeAll(",\"mentionText\":") catch return;
+                std.json.Stringify.encodeJsonString(name, .{}, mw) catch return;
+                mw.writeAll(",\"mentioned\":{\"user\":{\"id\":") catch return;
+                std.json.Stringify.encodeJsonString(user_id, .{}, mw) catch return;
+                mw.writeAll(",\"displayName\":") catch return;
+                std.json.Stringify.encodeJsonString(name, .{}, mw) catch return;
+                mw.writeAll(",\"userIdentityType\":\"aadUser\"}}}") catch return;
 
                 if (mention_count < 16) {
                     mention_infos[mention_count] = .{ .name = name, .id = user_id, .idx = mention_idx };
@@ -410,8 +418,9 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
 // Helpers — reduce boilerplate for common response patterns.
 // ---------------------------------------------------------------
 
-/// Write a text segment as HTML, converting newlines to <br> and
-/// wrapping bare http/https URLs in <a> tags.
+/// Write a text segment as HTML, converting newlines to <br>,
+/// wrapping bare http/https URLs in <a> tags, and HTML-escaping
+/// all text to prevent injection attacks.
 fn writeHtmlLinked(hw: anytype, text: []const u8) void {
     var i: usize = 0;
     while (i < text.len) {
@@ -428,10 +437,23 @@ fn writeHtmlLinked(hw: anytype, text: []const u8) void {
                 text[i] != '\n' and text[i] != '\r') : (i += 1)
             {}
             const url = text[url_start..i];
-            hw.print("<a href=\"{s}\">{s}</a>", .{ url, url }) catch return;
+            // HTML-escape the URL in both href and display text to prevent
+            // attribute breakout via " characters.
+            hw.writeAll("<a href=\"") catch return;
+            types.writeHtmlEscaped(hw, url);
+            hw.writeAll("\">") catch return;
+            types.writeHtmlEscaped(hw, url);
+            hw.writeAll("</a>") catch return;
             continue;
         }
-        hw.writeByte(text[i]) catch return;
+        // HTML-escape regular characters to prevent injection.
+        switch (text[i]) {
+            '<' => hw.writeAll("&lt;") catch return,
+            '>' => hw.writeAll("&gt;") catch return,
+            '&' => hw.writeAll("&amp;") catch return,
+            '"' => hw.writeAll("&quot;") catch return,
+            else => hw.writeByte(text[i]) catch return,
+        }
         i += 1;
     }
 }
@@ -481,15 +503,15 @@ pub fn handleDeleteChannelMessage(ctx: ToolContext) void {
         sendToolError(ctx, "Missing arguments. Provide teamId, channelId, and messageId.");
         return;
     };
-    const team_id = json_rpc.getStringArg(args, "teamId") orelse {
+    const team_id = json_rpc.getPathArg(args, "teamId") orelse {
         sendToolError(ctx, "Missing 'teamId' argument.");
         return;
     };
-    const channel_id = json_rpc.getStringArg(args, "channelId") orelse {
+    const channel_id = json_rpc.getPathArg(args, "channelId") orelse {
         sendToolError(ctx, "Missing 'channelId' argument.");
         return;
     };
-    const message_id = json_rpc.getStringArg(args, "messageId") orelse {
+    const message_id = json_rpc.getPathArg(args, "messageId") orelse {
         sendToolError(ctx, "Missing 'messageId' argument.");
         return;
     };
@@ -516,19 +538,19 @@ pub fn handleDeleteChannelReply(ctx: ToolContext) void {
         sendToolError(ctx, "Missing arguments. Provide teamId, channelId, messageId, and replyId.");
         return;
     };
-    const team_id = json_rpc.getStringArg(args, "teamId") orelse {
+    const team_id = json_rpc.getPathArg(args, "teamId") orelse {
         sendToolError(ctx, "Missing 'teamId' argument.");
         return;
     };
-    const channel_id = json_rpc.getStringArg(args, "channelId") orelse {
+    const channel_id = json_rpc.getPathArg(args, "channelId") orelse {
         sendToolError(ctx, "Missing 'channelId' argument.");
         return;
     };
-    const message_id = json_rpc.getStringArg(args, "messageId") orelse {
+    const message_id = json_rpc.getPathArg(args, "messageId") orelse {
         sendToolError(ctx, "Missing 'messageId' argument.");
         return;
     };
-    const reply_id = json_rpc.getStringArg(args, "replyId") orelse {
+    const reply_id = json_rpc.getPathArg(args, "replyId") orelse {
         sendToolError(ctx, "Missing 'replyId' argument.");
         return;
     };

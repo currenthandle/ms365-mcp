@@ -119,7 +119,8 @@ pub const ChatMessageRequest = struct {
 };
 
 /// Write a string with HTML special characters escaped.
-fn writeHtmlEscaped(w: *std.Io.Writer, text: []const u8) void {
+/// Public so other modules (e.g. channels.zig) can reuse it.
+pub fn writeHtmlEscaped(w: anytype, text: []const u8) void {
     for (text) |ch| {
         switch (ch) {
             '<' => w.writeAll("&lt;") catch return,
@@ -287,4 +288,62 @@ test "htmlAutoLink escapes ampersands" {
     const result = htmlAutoLink(testing.allocator, "a&b<c>d").?;
     defer testing.allocator.free(result);
     try testing.expectEqualStrings("a&amp;b&lt;c&gt;d", result);
+}
+
+// --- Security: HTML injection attack vectors ---
+
+test "htmlAutoLink escapes img onerror XSS" {
+    const result = htmlAutoLink(testing.allocator, "<img src=x onerror=alert(1)>").?;
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("&lt;img src=x onerror=alert(1)&gt;", result);
+}
+
+test "htmlAutoLink escapes nested HTML tags" {
+    const result = htmlAutoLink(testing.allocator, "<div><a href=\"javascript:alert(1)\">click</a></div>").?;
+    defer testing.allocator.free(result);
+    // All angle brackets and quotes must be escaped.
+    try testing.expect(std.mem.indexOf(u8, result, "<div>") == null);
+    try testing.expect(std.mem.indexOf(u8, result, "javascript:") == null);
+    try testing.expect(std.mem.indexOf(u8, result, "&lt;div&gt;") != null);
+}
+
+test "htmlAutoLink escapes event handler injection" {
+    const result = htmlAutoLink(testing.allocator, "\" onmouseover=\"alert(document.cookie)\" x=\"").?;
+    defer testing.allocator.free(result);
+    // Quotes must be escaped so they can't break out of attributes.
+    try testing.expect(std.mem.indexOf(u8, result, "onmouseover") != null);
+    try testing.expect(std.mem.indexOf(u8, result, "\"onmouseover") == null);
+    try testing.expect(std.mem.indexOf(u8, result, "&quot;") != null);
+}
+
+test "htmlAutoLink escapes javascript: URL" {
+    // "javascript:" is not http/https so it won't get <a> wrapped,
+    // but the angle brackets around it must still be escaped.
+    const result = htmlAutoLink(testing.allocator, "<a href=\"javascript:alert(1)\">").?;
+    defer testing.allocator.free(result);
+    try testing.expect(std.mem.indexOf(u8, result, "<a href") == null);
+    try testing.expect(std.mem.indexOf(u8, result, "&lt;a") != null);
+}
+
+test "htmlAutoLink URL with single quotes" {
+    const result = htmlAutoLink(testing.allocator, "https://evil.com/x'onmouseover='alert(1)").?;
+    defer testing.allocator.free(result);
+    // Single quotes pass through (href uses double quotes) but
+    // the URL should be in a proper <a> tag.
+    try testing.expect(std.mem.startsWith(u8, result, "<a href=\"https://evil.com/"));
+}
+
+test "htmlAutoLink handles null bytes" {
+    const result = htmlAutoLink(testing.allocator, "before\x00after").?;
+    defer testing.allocator.free(result);
+    // Null byte should just pass through as a regular byte, not cause issues.
+    try testing.expectEqual(@as(usize, 11), result.len);
+}
+
+test "htmlAutoLink escapes closing script in URL context" {
+    const result = htmlAutoLink(testing.allocator, "https://evil.com/</script><script>alert(1)//").?;
+    defer testing.allocator.free(result);
+    // The </script> must be escaped inside the href and display text.
+    try testing.expect(std.mem.indexOf(u8, result, "</script>") == null);
+    try testing.expect(std.mem.indexOf(u8, result, "&lt;/script&gt;") != null);
 }

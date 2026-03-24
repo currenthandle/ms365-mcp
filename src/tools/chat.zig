@@ -22,14 +22,27 @@ fn sendResult(ctx: ToolContext, text: []const u8) void {
 }
 
 /// Build a single member JSON object for the create-chat API.
-/// Template string because the field names have @ characters
-/// that can't be Zig struct field names.
+/// Uses JSON serialization to safely escape the identifier,
+/// preventing JSON injection via crafted email addresses.
 /// `identifier` can be a user ID (GUID) or email address —
 /// the Graph API accepts both in the users('...') binding.
 fn buildMemberJson(allocator: Allocator, identifier: []const u8) ![]u8 {
-    return std.fmt.allocPrint(allocator,
-        \\{{"@odata.type":"#microsoft.graph.aadUserConversationMember","roles":["owner"],"user@odata.bind":"https://graph.microsoft.com/v1.0/users('{s}')"}}
-    , .{identifier});
+    // Build the user@odata.bind value with the identifier.
+    const bind_value = try std.fmt.allocPrint(allocator,
+        "https://graph.microsoft.com/v1.0/users('{s}')", .{identifier});
+    defer allocator.free(bind_value);
+
+    // Use a JSON writer to safely build the object — this escapes
+    // quotes, backslashes, and control characters in the identifier.
+    var buf: std.Io.Writer.Allocating = .init(allocator);
+    const w = &buf.writer;
+    w.writeAll("{") catch return error.OutOfMemory;
+    w.writeAll("\"@odata.type\":\"#microsoft.graph.aadUserConversationMember\",") catch return error.OutOfMemory;
+    w.writeAll("\"roles\":[\"owner\"],") catch return error.OutOfMemory;
+    w.writeAll("\"user@odata.bind\":") catch return error.OutOfMemory;
+    std.json.Stringify.encodeJsonString(bind_value, .{}, w) catch return error.OutOfMemory;
+    w.writeAll("}") catch return error.OutOfMemory;
+    return buf.toOwnedSlice() catch return error.OutOfMemory;
 }
 
 /// List messages in a Teams chat by chat ID.
@@ -50,12 +63,12 @@ pub fn handleListChatMessages(ctx: ToolContext) void {
             return;
         };
     } else blk: {
-        const chat_id = json_rpc.getStringArg(args, "chatId") orelse {
+        const chat_id = json_rpc.getPathArg(args, "chatId") orelse {
             sendResult(ctx, "Missing 'chatId' argument.");
             return;
         };
 
-        const top = json_rpc.getStringArg(args, "top") orelse "50";
+        const top = json_rpc.getTopArg(args);
 
         break :blk std.fmt.allocPrint(
             ctx.allocator,
@@ -91,7 +104,7 @@ pub fn handleListChats(ctx: ToolContext) void {
             return;
         };
     } else blk: {
-        const top = if (args) |a| (json_rpc.getStringArg(a, "top") orelse "50") else "50";
+        const top = if (args) |a| json_rpc.getTopArg(a) else "50";
         break :blk std.fmt.allocPrint(
             ctx.allocator,
             "/me/chats?$top={s}&$select=id,topic,chatType,lastUpdatedDateTime&$expand=members",
@@ -228,7 +241,7 @@ pub fn handleSendChatMessage(ctx: ToolContext) void {
     };
 
     // "chatId" — which chat to send the message to.
-    const chat_id = json_rpc.getStringArg(args, "chatId") orelse {
+    const chat_id = json_rpc.getPathArg(args, "chatId") orelse {
         const content: []const types.TextContent = &.{
             .{ .text = "Missing 'chatId' argument." },
         };
@@ -397,11 +410,11 @@ pub fn handleDeleteChatMessage(ctx: ToolContext) void {
         sendResult(ctx, "Missing arguments. Provide chatId and messageId.");
         return;
     };
-    const chat_id = json_rpc.getStringArg(args, "chatId") orelse {
+    const chat_id = json_rpc.getPathArg(args, "chatId") orelse {
         sendResult(ctx, "Missing 'chatId' argument.");
         return;
     };
-    const message_id = json_rpc.getStringArg(args, "messageId") orelse {
+    const message_id = json_rpc.getPathArg(args, "messageId") orelse {
         sendResult(ctx, "Missing 'messageId' argument.");
         return;
     };

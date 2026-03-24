@@ -105,7 +105,7 @@ pub fn handleReadEmail(ctx: ToolContext) void {
     };
 
     // "emailId" — the ID of the email to read (from list-emails results).
-    const email_id = json_rpc.getStringArg(args, "emailId") orelse {
+    const email_id = json_rpc.getPathArg(args, "emailId") orelse {
         const content: []const types.TextContent = &.{
             .{ .text = "Missing 'emailId' argument." },
         };
@@ -279,7 +279,7 @@ pub fn handleDeleteEmail(ctx: ToolContext) void {
         return;
     };
 
-    const email_id = json_rpc.getStringArg(args, "emailId") orelse {
+    const email_id = json_rpc.getPathArg(args, "emailId") orelse {
         const content: []const types.TextContent = &.{
             .{ .text = "Missing 'emailId' argument." },
         };

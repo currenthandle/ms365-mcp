@@ -158,7 +158,7 @@ pub fn handleSendDraft(ctx: ToolContext) void {
         return;
     };
 
-    const draft_id = json_rpc.getStringArg(args, "draftId") orelse {
+    const draft_id = json_rpc.getPathArg(args, "draftId") orelse {
         const content: []const types.TextContent = &.{
             .{ .text = "Missing 'draftId' argument." },
         };
@@ -214,7 +214,7 @@ pub fn handleUpdateDraft(ctx: ToolContext) void {
         return;
     };
 
-    const draft_id = json_rpc.getStringArg(args, "draftId") orelse {
+    const draft_id = json_rpc.getPathArg(args, "draftId") orelse {
         const content: []const types.TextContent = &.{
             .{ .text = "Missing 'draftId' argument." },
         };
@@ -345,7 +345,7 @@ pub fn handleDeleteDraft(ctx: ToolContext) void {
         return;
     };
 
-    const draft_id = json_rpc.getStringArg(args, "draftId") orelse {
+    const draft_id = json_rpc.getPathArg(args, "draftId") orelse {
         const content: []const types.TextContent = &.{
             .{ .text = "Missing 'draftId' argument." },
         };
@@ -402,7 +402,7 @@ pub fn handleAddAttachment(ctx: ToolContext) void {
         return;
     };
 
-    const draft_id = json_rpc.getStringArg(args, "draftId") orelse {
+    const draft_id = json_rpc.getPathArg(args, "draftId") orelse {
         const content: []const types.TextContent = &.{
             .{ .text = "Missing 'draftId' argument." },
         };
@@ -592,7 +592,7 @@ pub fn handleListAttachments(ctx: ToolContext) void {
         return;
     };
 
-    const draft_id = json_rpc.getStringArg(args, "draftId") orelse {
+    const draft_id = json_rpc.getPathArg(args, "draftId") orelse {
         const content: []const types.TextContent = &.{
             .{ .text = "Missing 'draftId' argument." },
         };
@@ -649,7 +649,7 @@ pub fn handleRemoveAttachment(ctx: ToolContext) void {
         return;
     };
 
-    const draft_id = json_rpc.getStringArg(args, "draftId") orelse {
+    const draft_id = json_rpc.getPathArg(args, "draftId") orelse {
         const content: []const types.TextContent = &.{
             .{ .text = "Missing 'draftId' argument." },
         };
@@ -660,7 +660,7 @@ pub fn handleRemoveAttachment(ctx: ToolContext) void {
         });
         return;
     };
-    const attachment_id = json_rpc.getStringArg(args, "attachmentId") orelse {
+    const attachment_id = json_rpc.getPathArg(args, "attachmentId") orelse {
         const content: []const types.TextContent = &.{
             .{ .text = "Missing 'attachmentId' argument. Use list-attachments to find IDs." },
         };
