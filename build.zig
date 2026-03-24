@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
     // source files + target + optimization level together.
     // "src/main.zig" is the root — Zig follows all @import()s from there.
     const exe = b.addExecutable(.{
-        .name = "ms-mcp",
+        .name = "ms365-mcp",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,

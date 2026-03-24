@@ -32,7 +32,7 @@ pub const Capabilities = struct {
 
 /// Identifies this server to the client.
 pub const ServerInfo = struct {
-    name: []const u8 = "ms-mcp",
+    name: []const u8 = "ms365-mcp",
     version: []const u8 = "0.1.0",
 };
 

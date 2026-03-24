@@ -26,22 +26,22 @@ jobs:
         run: |
           # macOS Apple Silicon (aarch64-macos)
           zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe
-          mv zig-out/bin/ms-mcp ms-mcp-macos-arm64
+          mv zig-out/bin/ms365-mcp ms365-mcp-macos-arm64
           rm -rf zig-out
 
           # macOS Intel (x86_64-macos)
           zig build -Dtarget=x86_64-macos -Doptimize=ReleaseSafe
-          mv zig-out/bin/ms-mcp ms-mcp-macos-x86_64
+          mv zig-out/bin/ms365-mcp ms365-mcp-macos-x86_64
           rm -rf zig-out
 
           # Linux ARM64 (aarch64-linux)
           zig build -Dtarget=aarch64-linux -Doptimize=ReleaseSafe
-          mv zig-out/bin/ms-mcp ms-mcp-linux-arm64
+          mv zig-out/bin/ms365-mcp ms365-mcp-linux-arm64
           rm -rf zig-out
 
           # Linux x86_64 (x86_64-linux)
           zig build -Dtarget=x86_64-linux -Doptimize=ReleaseSafe
-          mv zig-out/bin/ms-mcp ms-mcp-linux-x86_64
+          mv zig-out/bin/ms365-mcp ms365-mcp-linux-x86_64
           rm -rf zig-out
 
       - name: Create GitHub Release
@@ -49,7 +49,7 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            ms-mcp-macos-arm64
-            ms-mcp-macos-x86_64
-            ms-mcp-linux-arm64
-            ms-mcp-linux-x86_64
+            ms365-mcp-macos-arm64
+            ms365-mcp-macos-x86_64
+            ms365-mcp-linux-arm64
+            ms365-mcp-linux-x86_64

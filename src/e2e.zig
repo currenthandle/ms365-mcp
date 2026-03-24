@@ -1420,7 +1420,7 @@ pub fn main() !void {
     defer env_map.deinit();
 
     // Build the absolute path to the MCP server binary.
-    const exe_path = "zig-out/bin/ms-mcp";
+    const exe_path = "zig-out/bin/ms365-mcp";
 
     std.debug.print("\n\x1b[1m── ms-mcp End-to-End Tests ──\x1b[0m\n\n", .{});
 

@@ -12,15 +12,15 @@ ARCH="$(uname -m)"
 case "${OS}" in
     Darwin)
         case "${ARCH}" in
-            arm64)  BINARY="ms-mcp-macos-arm64" ;;
-            x86_64) BINARY="ms-mcp-macos-x86_64" ;;
+            arm64)  BINARY="ms365-mcp-macos-arm64" ;;
+            x86_64) BINARY="ms365-mcp-macos-x86_64" ;;
             *)      echo "Unsupported architecture: ${ARCH}"; exit 1 ;;
         esac
         ;;
     Linux)
         case "${ARCH}" in
-            aarch64) BINARY="ms-mcp-linux-arm64" ;;
-            x86_64)  BINARY="ms-mcp-linux-x86_64" ;;
+            aarch64) BINARY="ms365-mcp-linux-arm64" ;;
+            x86_64)  BINARY="ms365-mcp-linux-x86_64" ;;
             *)       echo "Unsupported architecture: ${ARCH}"; exit 1 ;;
         esac
         ;;
@@ -36,15 +36,15 @@ if [ -z "${LATEST}" ]; then
     exit 1
 fi
 
-echo "Installing ms-mcp ${LATEST} (${OS} ${ARCH})..."
+echo "Installing ms365-mcp ${LATEST} (${OS} ${ARCH})..."
 
 # Download the binary.
 URL="https://github.com/${REPO}/releases/download/${LATEST}/${BINARY}"
 mkdir -p "${INSTALL_DIR}"
-curl -fsSL "${URL}" -o "${INSTALL_DIR}/ms-mcp"
-chmod +x "${INSTALL_DIR}/ms-mcp"
+curl -fsSL "${URL}" -o "${INSTALL_DIR}/ms365-mcp"
+chmod +x "${INSTALL_DIR}/ms365-mcp"
 
-echo "Installed to ${INSTALL_DIR}/ms-mcp"
+echo "Installed to ${INSTALL_DIR}/ms365-mcp"
 
 # Check if INSTALL_DIR is in PATH.
 case ":${PATH}:" in
@@ -52,4 +52,4 @@ case ":${PATH}:" in
     *) echo "Add ${INSTALL_DIR} to your PATH: export PATH=\"\${HOME}/.local/bin:\${PATH}\"" ;;
 esac
 
-echo "Done! Run 'ms-mcp' to start the server."
+echo "Done! Run 'ms365-mcp' to start the server."

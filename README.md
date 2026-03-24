@@ -1,4 +1,4 @@
-# ms-mcp
+# ms365-mcp
 
 A lightweight Microsoft 365 MCP server written in Zig. ~4.6k lines of code, ~5.7MB binary, no runtime dependencies.
 
@@ -10,7 +10,7 @@ Exposes Microsoft Graph API functionality — Teams, Outlook, and Calendar — a
 curl -fsSL https://raw.githubusercontent.com/currenthandle/ms365-mcp/main/install.sh | sh
 ```
 
-This downloads the right binary for your platform (macOS/Linux, ARM64/x86_64) to `~/.local/bin/ms-mcp`.
+This downloads the right binary for your platform (macOS/Linux, ARM64/x86_64) to `~/.local/bin/ms365-mcp`.
 
 ## Setup
 
@@ -22,7 +22,7 @@ This downloads the right binary for your platform (macOS/Linux, ARM64/x86_64) to
 {
   "mcpServers": {
     "ms365": {
-      "command": "$HOME/.local/bin/ms-mcp",
+      "command": "$HOME/.local/bin/ms365-mcp",
       "env": {
         "MS365_CLIENT_ID": "your-client-id",
         "MS365_TENANT_ID": "your-tenant-id"
