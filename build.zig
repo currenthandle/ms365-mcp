@@ -27,6 +27,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
 
@@ -50,6 +51,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     const run_tests = b.addRunArtifact(unit_tests);
@@ -65,6 +67,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/e2e.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     b.installArtifact(e2e_exe);
