@@ -77,8 +77,7 @@ pub fn handleUpdateCalendarEvent(ctx: ToolContext) void {
     var update_obj: ObjectMap = .empty;
     defer update_obj.deinit(ctx.allocator);
 
-    if (json_rpc.getStringArg(args, "subject")) |s|
-        update_obj.put(ctx.allocator, "subject", .{ .string = s }) catch return;
+    ctx.putStringIfPresent(&update_obj, args, "subject");
 
     if (json_rpc.getStringArg(args, "startDateTime")) |s| {
         var obj: ObjectMap = .empty;

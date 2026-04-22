@@ -78,4 +78,20 @@ pub const ToolContext = struct {
         _ = self;
         return json_rpc.getTopArg(args);
     }
+
+    // --- JSON body helpers ---
+
+    /// If `args` has a string at `key`, copy it into `map` under the same key.
+    /// No-op if the arg is missing or not a string. Silently drops allocation
+    /// failures — follows the existing `catch return` pattern used in patch builders.
+    pub fn putStringIfPresent(
+        self: ToolContext,
+        map: *ObjectMap,
+        args: ObjectMap,
+        key: []const u8,
+    ) void {
+        if (json_rpc.getStringArg(args, key)) |v| {
+            map.put(self.allocator, key, .{ .string = v }) catch {};
+        }
+    }
 };

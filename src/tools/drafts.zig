@@ -90,8 +90,7 @@ pub fn handleUpdateDraft(ctx: ToolContext) void {
     var patch_obj: ObjectMap = .empty;
     defer patch_obj.deinit(ctx.allocator);
 
-    if (json_rpc.getStringArg(args, "subject")) |subject|
-        patch_obj.put(ctx.allocator, "subject", .{ .string = subject }) catch return;
+    ctx.putStringIfPresent(&patch_obj, args, "subject");
 
     if (json_rpc.getStringArg(args, "body")) |body_text| {
         const is_html = std.mem.indexOf(u8, body_text, "<html") != null or
