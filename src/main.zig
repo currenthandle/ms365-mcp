@@ -21,6 +21,58 @@ const Allocator = std.mem.Allocator;
 const Reader = std.Io.Reader;
 const Writer = std.Io.Writer;
 
+/// Tool handler signature — every handler takes a ToolContext and returns void.
+/// Errors and results are signaled via `ctx.sendResult()`.
+const Handler = *const fn (ToolContext) void;
+
+/// Maps a tool name (as sent by the MCP client) to its handler function.
+/// Built at compile time from the list of tools registered in tools/registry.zig.
+/// This replaces what would otherwise be a long chain of `if/else if` comparisons.
+const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
+    // --- Auth & session ---
+    .{ "login", auth_tools.handleLogin },
+    .{ "verify-login", auth_tools.handleVerifyLogin },
+    .{ "get-mailbox-settings", auth_tools.handleGetMailboxSettings },
+    .{ "sync-timezone", auth_tools.handleSyncTimezone },
+    // --- Email ---
+    .{ "list-emails", email_tools.handleListEmails },
+    .{ "read-email", email_tools.handleReadEmail },
+    .{ "send-email", email_tools.handleSendEmail },
+    .{ "delete-email", email_tools.handleDeleteEmail },
+    // --- Drafts ---
+    .{ "create-draft", draft_tools.handleCreateDraft },
+    .{ "send-draft", draft_tools.handleSendDraft },
+    .{ "update-draft", draft_tools.handleUpdateDraft },
+    .{ "delete-draft", draft_tools.handleDeleteDraft },
+    .{ "add-attachment", draft_tools.handleAddAttachment },
+    .{ "list-attachments", draft_tools.handleListAttachments },
+    .{ "remove-attachment", draft_tools.handleRemoveAttachment },
+    // --- Chat ---
+    .{ "list-chats", chat_tools.handleListChats },
+    .{ "list-chat-messages", chat_tools.handleListChatMessages },
+    .{ "send-chat-message", chat_tools.handleSendChatMessage },
+    .{ "create-chat", chat_tools.handleCreateChat },
+    .{ "delete-chat-message", chat_tools.handleDeleteChatMessage },
+    // --- Calendar ---
+    .{ "get-calendar-event", calendar_tools.handleGetCalendarEvent },
+    .{ "list-calendar-events", calendar_tools.handleListCalendarEvents },
+    .{ "create-calendar-event", calendar_tools.handleCreateCalendarEvent },
+    .{ "update-calendar-event", calendar_tools.handleUpdateCalendarEvent },
+    .{ "delete-calendar-event", calendar_tools.handleDeleteCalendarEvent },
+    // --- Teams channels ---
+    .{ "list-teams", channel_tools.handleListTeams },
+    .{ "list-channels", channel_tools.handleListChannels },
+    .{ "list-channel-messages", channel_tools.handleListChannelMessages },
+    .{ "get-channel-message-replies", channel_tools.handleGetChannelMessageReplies },
+    .{ "post-channel-message", channel_tools.handlePostChannelMessage },
+    .{ "reply-to-channel-message", channel_tools.handleReplyToChannelMessage },
+    .{ "delete-channel-message", channel_tools.handleDeleteChannelMessage },
+    .{ "delete-channel-reply", channel_tools.handleDeleteChannelReply },
+    // --- Utility ---
+    .{ "search-users", user_tools.handleSearchUsers },
+    .{ "get-profile", user_tools.handleGetProfile },
+});
+
 pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
@@ -167,80 +219,9 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                         .parsed = parsed.value,
                     };
 
-                    // --- Auth & session tools ---
-                    if (std.mem.eql(u8, name, "login")) {
-                        auth_tools.handleLogin(ctx);
-                    } else if (std.mem.eql(u8, name, "verify-login")) {
-                        auth_tools.handleVerifyLogin(ctx);
-                    } else if (std.mem.eql(u8, name, "get-mailbox-settings")) {
-                        auth_tools.handleGetMailboxSettings(ctx);
-                    } else if (std.mem.eql(u8, name, "sync-timezone")) {
-                        auth_tools.handleSyncTimezone(ctx);
-                    } else if (std.mem.eql(u8, name, "list-emails")) {
-                        email_tools.handleListEmails(ctx);
-                    } else if (std.mem.eql(u8, name, "read-email")) {
-                        email_tools.handleReadEmail(ctx);
-                    } else if (std.mem.eql(u8, name, "send-email")) {
-                        email_tools.handleSendEmail(ctx);
-                    } else if (std.mem.eql(u8, name, "create-draft")) {
-                        draft_tools.handleCreateDraft(ctx);
-                    } else if (std.mem.eql(u8, name, "send-draft")) {
-                        draft_tools.handleSendDraft(ctx);
-                    } else if (std.mem.eql(u8, name, "update-draft")) {
-                        draft_tools.handleUpdateDraft(ctx);
-                    } else if (std.mem.eql(u8, name, "delete-draft")) {
-                        draft_tools.handleDeleteDraft(ctx);
-                    } else if (std.mem.eql(u8, name, "add-attachment")) {
-                        draft_tools.handleAddAttachment(ctx);
-                    } else if (std.mem.eql(u8, name, "list-attachments")) {
-                        draft_tools.handleListAttachments(ctx);
-                    } else if (std.mem.eql(u8, name, "remove-attachment")) {
-                        draft_tools.handleRemoveAttachment(ctx);
-                    } else if (std.mem.eql(u8, name, "list-chat-messages")) {
-                        chat_tools.handleListChatMessages(ctx);
-                    } else if (std.mem.eql(u8, name, "search-users")) {
-                        user_tools.handleSearchUsers(ctx);
-                    } else if (std.mem.eql(u8, name, "get-profile")) {
-                        user_tools.handleGetProfile(ctx);
-                    } else if (std.mem.eql(u8, name, "list-chats")) {
-                        chat_tools.handleListChats(ctx);
-                    } else if (std.mem.eql(u8, name, "send-chat-message")) {
-                        chat_tools.handleSendChatMessage(ctx);
-                    } else if (std.mem.eql(u8, name, "get-calendar-event")) {
-                        calendar_tools.handleGetCalendarEvent(ctx);
-                    } else if (std.mem.eql(u8, name, "update-calendar-event")) {
-                        calendar_tools.handleUpdateCalendarEvent(ctx);
-                    } else if (std.mem.eql(u8, name, "delete-calendar-event")) {
-                        calendar_tools.handleDeleteCalendarEvent(ctx);
-                    } else if (std.mem.eql(u8, name, "create-calendar-event")) {
-                        calendar_tools.handleCreateCalendarEvent(ctx);
-                    } else if (std.mem.eql(u8, name, "list-calendar-events")) {
-                        calendar_tools.handleListCalendarEvents(ctx);
-                    } else if (std.mem.eql(u8, name, "create-chat")) {
-                        chat_tools.handleCreateChat(ctx);
-
-                        // --- Teams channel tools ---
-                    } else if (std.mem.eql(u8, name, "list-teams")) {
-                        channel_tools.handleListTeams(ctx);
-                    } else if (std.mem.eql(u8, name, "list-channels")) {
-                        channel_tools.handleListChannels(ctx);
-                    } else if (std.mem.eql(u8, name, "list-channel-messages")) {
-                        channel_tools.handleListChannelMessages(ctx);
-                    } else if (std.mem.eql(u8, name, "get-channel-message-replies")) {
-                        channel_tools.handleGetChannelMessageReplies(ctx);
-                    } else if (std.mem.eql(u8, name, "post-channel-message")) {
-                        channel_tools.handlePostChannelMessage(ctx);
-                    } else if (std.mem.eql(u8, name, "reply-to-channel-message")) {
-                        channel_tools.handleReplyToChannelMessage(ctx);
-                    } else if (std.mem.eql(u8, name, "delete-email")) {
-                        email_tools.handleDeleteEmail(ctx);
-                    } else if (std.mem.eql(u8, name, "delete-chat-message")) {
-                        chat_tools.handleDeleteChatMessage(ctx);
-                    } else if (std.mem.eql(u8, name, "delete-channel-message")) {
-                        channel_tools.handleDeleteChannelMessage(ctx);
-                    } else if (std.mem.eql(u8, name, "delete-channel-reply")) {
-                        channel_tools.handleDeleteChannelReply(ctx);
-                    }
+                    // Look up the handler by tool name. Unknown tools are silently
+                    // ignored, matching previous behavior (the if/else chain had no else).
+                    if (tool_handlers.get(name)) |handler| handler(ctx);
                 }
             } else if (std.mem.eql(u8, m, "tools/list")) {
                 // Return the full list of tool definitions with JSON Schema inputSchemas.
