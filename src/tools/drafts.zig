@@ -83,11 +83,11 @@ pub fn handleUpdateDraft(ctx: ToolContext) void {
     const draft_id = ctx.getPathArg(args, "draftId", "Missing 'draftId' argument.") orelse return;
 
     // Build PATCH body with only provided fields.
-    var patch_obj = std.json.ObjectMap.init(ctx.allocator);
-    defer patch_obj.deinit();
+    var patch_obj: std.json.ObjectMap = .empty;
+    defer patch_obj.deinit(ctx.allocator);
 
     if (json_rpc.getStringArg(args, "subject")) |subject|
-        patch_obj.put("subject", .{ .string = subject }) catch return;
+        patch_obj.put(ctx.allocator, "subject", .{ .string = subject }) catch return;
 
     if (json_rpc.getStringArg(args, "body")) |body_text| {
         const is_html = std.mem.indexOf(u8, body_text, "<html") != null or
@@ -96,10 +96,10 @@ pub fn handleUpdateDraft(ctx: ToolContext) void {
             std.mem.indexOf(u8, body_text, "<br") != null or
             std.mem.indexOf(u8, body_text, "<img") != null or
             std.mem.indexOf(u8, body_text, "<table") != null;
-        var body_obj = std.json.ObjectMap.init(ctx.allocator);
-        body_obj.put("contentType", .{ .string = if (is_html) "HTML" else "Text" }) catch return;
-        body_obj.put("content", .{ .string = body_text }) catch return;
-        patch_obj.put("body", .{ .object = body_obj }) catch return;
+        var body_obj: std.json.ObjectMap = .empty;
+        body_obj.put(ctx.allocator, "contentType", .{ .string = if (is_html) "HTML" else "Text" }) catch return;
+        body_obj.put(ctx.allocator, "content", .{ .string = body_text }) catch return;
+        patch_obj.put(ctx.allocator, "body", .{ .object = body_obj }) catch return;
     }
 
     // Optional recipient updates.
@@ -108,13 +108,13 @@ pub fn handleUpdateDraft(ctx: ToolContext) void {
             defer ctx.allocator.free(recipients);
             var arr = std.json.Array.initCapacity(ctx.allocator, recipients.len) catch return;
             for (recipients) |r| {
-                var email_obj = std.json.ObjectMap.init(ctx.allocator);
-                email_obj.put("address", .{ .string = r.emailAddress.address }) catch return;
-                var recip_obj = std.json.ObjectMap.init(ctx.allocator);
-                recip_obj.put("emailAddress", .{ .object = email_obj }) catch return;
+                var email_obj: std.json.ObjectMap = .empty;
+                email_obj.put(ctx.allocator, "address", .{ .string = r.emailAddress.address }) catch return;
+                var recip_obj: std.json.ObjectMap = .empty;
+                recip_obj.put(ctx.allocator, "emailAddress", .{ .object = email_obj }) catch return;
                 arr.appendAssumeCapacity(.{ .object = recip_obj });
             }
-            patch_obj.put(pair[1], .{ .array = arr }) catch return;
+            patch_obj.put(ctx.allocator, pair[1], .{ .array = arr }) catch return;
         }
     }
 
@@ -190,15 +190,15 @@ pub fn handleAddAttachment(ctx: ToolContext) void {
     const content_id = json_rpc.getStringArg(args, "contentId");
 
     // Build attachment JSON.
-    var obj = std.json.ObjectMap.init(ctx.allocator);
-    defer obj.deinit();
-    obj.put("@odata.type", .{ .string = "#microsoft.graph.fileAttachment" }) catch return;
-    obj.put("name", .{ .string = file_name }) catch return;
-    obj.put("contentType", .{ .string = content_type }) catch return;
-    obj.put("contentBytes", .{ .string = b64 }) catch return;
+    var obj: std.json.ObjectMap = .empty;
+    defer obj.deinit(ctx.allocator);
+    obj.put(ctx.allocator, "@odata.type", .{ .string = "#microsoft.graph.fileAttachment" }) catch return;
+    obj.put(ctx.allocator, "name", .{ .string = file_name }) catch return;
+    obj.put(ctx.allocator, "contentType", .{ .string = content_type }) catch return;
+    obj.put(ctx.allocator, "contentBytes", .{ .string = b64 }) catch return;
     if (is_inline) {
-        obj.put("isInline", .{ .bool = true }) catch return;
-        if (content_id) |cid| obj.put("contentId", .{ .string = cid }) catch return;
+        obj.put(ctx.allocator, "isInline", .{ .bool = true }) catch return;
+        if (content_id) |cid| obj.put(ctx.allocator, "contentId", .{ .string = cid }) catch return;
     }
 
     var json_buf: std.Io.Writer.Allocating = .init(ctx.allocator);

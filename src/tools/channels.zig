@@ -94,6 +94,47 @@ pub fn handleGetChannelMessageReplies(ctx: ToolContext) void {
     ctx.sendResult(response);
 }
 
+/// Post a new top-level message to a Teams channel. Supports @mentions and optional subject.
+pub fn handlePostChannelMessage(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide teamId, channelId, and message.") orelse return;
+    const team_id = ctx.getPathArg(args, "teamId", "Missing 'teamId' argument.") orelse return;
+    const channel_id = ctx.getPathArg(args, "channelId", "Missing 'channelId' argument.") orelse return;
+    const message = ctx.getStringArg(args, "message", "Missing 'message' argument.") orelse return;
+    const mentions_str = json_rpc.getStringArg(args, "mentions");
+    const subject = json_rpc.getStringArg(args, "subject");
+
+    const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages", .{ team_id, channel_id }) catch return;
+    defer ctx.allocator.free(path);
+
+    // Build the JSON body.
+    var json_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
+    defer json_buf.deinit();
+    const w = &json_buf.writer;
+
+    if (mentions_str) |mentions_raw| {
+        buildMentionedMessage(ctx.allocator, w, message, mentions_raw, subject);
+    } else {
+        const html_content = types.htmlAutoLink(ctx.allocator, message) orelse message;
+        defer if (html_content.ptr != message.ptr) ctx.allocator.free(html_content);
+        w.writeAll("{\"body\":{\"contentType\":\"html\",\"content\":") catch return;
+        std.json.Stringify.encodeJsonString(html_content, .{}, w) catch return;
+        w.writeAll("}") catch return;
+        if (subject) |subj| {
+            w.writeAll(",\"subject\":") catch return;
+            std.json.Stringify.encodeJsonString(subj, .{}, w) catch return;
+        }
+        w.writeAll("}") catch return;
+    }
+
+    _ = graph.post(ctx.allocator, ctx.io, token, path, json_buf.written()) catch {
+        ctx.sendResult("Failed to post channel message.");
+        return;
+    };
+
+    ctx.sendResult("Channel message posted.");
+}
+
 /// Reply to a message thread in a Teams channel. Supports @mentions.
 pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
     const token = ctx.requireAuth() orelse return;
@@ -113,7 +154,7 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
     const w = &json_buf.writer;
 
     if (mentions_str) |mentions_raw| {
-        buildMentionedReply(ctx.allocator, w, message, mentions_raw);
+        buildMentionedMessage(ctx.allocator, w, message, mentions_raw, null);
     } else {
         // No mentions — send as HTML with auto-linked URLs.
         const html_content = types.htmlAutoLink(ctx.allocator, message) orelse message;
@@ -244,8 +285,9 @@ fn writeHtmlLinked(hw: anytype, text: []const u8) void {
     }
 }
 
-/// Build the JSON body for a channel reply with @mentions.
-fn buildMentionedReply(allocator: std.mem.Allocator, w: anytype, message: []const u8, mentions_raw: []const u8) void {
+/// Build the JSON body for a channel message with @mentions and optional subject.
+/// Used by both post-channel-message and reply-to-channel-message.
+fn buildMentionedMessage(allocator: std.mem.Allocator, w: anytype, message: []const u8, mentions_raw: []const u8, subject: ?[]const u8) void {
     var html_buf: std.Io.Writer.Allocating = .init(allocator);
     defer html_buf.deinit();
     var mentions_json_buf: std.Io.Writer.Allocating = .init(allocator);
@@ -333,10 +375,118 @@ fn buildMentionedReply(allocator: std.mem.Allocator, w: anytype, message: []cons
         }
     }
 
-    // Assemble JSON with HTML body and mentions.
+    // Assemble JSON with HTML body, mentions, and optional subject.
     w.writeAll("{\"body\":{\"contentType\":\"html\",\"content\":") catch return;
     std.json.Stringify.encodeJsonString(html_buf.written(), .{}, w) catch return;
     w.writeAll("},\"mentions\":") catch return;
     w.writeAll(mentions_json_buf.written()) catch return;
+    if (subject) |subj| {
+        w.writeAll(",\"subject\":") catch return;
+        std.json.Stringify.encodeJsonString(subj, .{}, w) catch return;
+    }
     w.writeAll("}") catch return;
+}
+
+// ---------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------
+
+test "buildMentionedMessage basic mention" {
+    const allocator = std.testing.allocator;
+    var json_buf: std.Io.Writer.Allocating = .init(allocator);
+    defer json_buf.deinit();
+
+    buildMentionedMessage(allocator, &json_buf.writer, "Hey @Rohit check this", "Rohit Sureka|abc-123", null);
+
+    const result = json_buf.written();
+    try std.testing.expect(std.mem.indexOf(u8, result, "<at id=\\\"0\\\">Rohit Sureka</at>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "\"mentionText\":\"Rohit Sureka\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "\"id\":\"abc-123\"") != null);
+}
+
+test "buildMentionedMessage with subject" {
+    const allocator = std.testing.allocator;
+    var json_buf: std.Io.Writer.Allocating = .init(allocator);
+    defer json_buf.deinit();
+
+    buildMentionedMessage(allocator, &json_buf.writer, "Hello world", "", "My Subject");
+
+    const result = json_buf.written();
+    try std.testing.expect(std.mem.indexOf(u8, result, "\"subject\":\"My Subject\"") != null);
+}
+
+test "buildMentionedMessage without subject" {
+    const allocator = std.testing.allocator;
+    var json_buf: std.Io.Writer.Allocating = .init(allocator);
+    defer json_buf.deinit();
+
+    buildMentionedMessage(allocator, &json_buf.writer, "Hello world", "", null);
+
+    const result = json_buf.written();
+    try std.testing.expect(std.mem.indexOf(u8, result, "subject") == null);
+}
+
+test "buildMentionedMessage multiple mentions" {
+    const allocator = std.testing.allocator;
+    var json_buf: std.Io.Writer.Allocating = .init(allocator);
+    defer json_buf.deinit();
+
+    buildMentionedMessage(allocator, &json_buf.writer, "@Alice and @Bob please review", "Alice Smith|id-1,Bob Jones|id-2", null);
+
+    const result = json_buf.written();
+    try std.testing.expect(std.mem.indexOf(u8, result, "<at id=\\\"0\\\">Alice Smith</at>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "<at id=\\\"1\\\">Bob Jones</at>") != null);
+}
+
+test "buildMentionedMessage first-name matching" {
+    const allocator = std.testing.allocator;
+    var json_buf: std.Io.Writer.Allocating = .init(allocator);
+    defer json_buf.deinit();
+
+    buildMentionedMessage(allocator, &json_buf.writer, "Hey @Rohit check this", "Rohit Sureka|abc-123", null);
+
+    const result = json_buf.written();
+    // @Rohit should match "Rohit Sureka" by first name
+    try std.testing.expect(std.mem.indexOf(u8, result, "<at id=\\\"0\\\">Rohit Sureka</at>") != null);
+}
+
+test "buildMentionedMessage unmatched @ preserved" {
+    const allocator = std.testing.allocator;
+    var json_buf: std.Io.Writer.Allocating = .init(allocator);
+    defer json_buf.deinit();
+
+    buildMentionedMessage(allocator, &json_buf.writer, "email me @unknown", "Alice|id-1", null);
+
+    const result = json_buf.written();
+    try std.testing.expect(std.mem.indexOf(u8, result, "@unknown") != null);
+}
+
+test "buildSummary formats teams/channels" {
+    const allocator = std.testing.allocator;
+    const ctx = ToolContext{
+        .allocator = allocator,
+        .io = undefined,
+        .raw_message = undefined,
+    };
+
+    const response =
+        \\{"value":[{"displayName":"Team A","id":"id-a","description":"Desc A"},{"displayName":"Team B","id":"id-b","description":""}]}
+    ;
+    const result = buildSummary(ctx, response);
+    try std.testing.expect(result != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.?, "Team A — Desc A — id: id-a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.?, "Team B — id: id-b") != null);
+}
+
+test "writeHtmlLinked escapes HTML and links URLs" {
+    const allocator = std.testing.allocator;
+    var buf: std.Io.Writer.Allocating = .init(allocator);
+    defer buf.deinit();
+
+    writeHtmlLinked(&buf.writer, "Check https://example.com & <script>");
+
+    const result = buf.written();
+    try std.testing.expect(std.mem.indexOf(u8, result, "<a href=\"https://example.com\">https://example.com</a>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "&amp;") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "&lt;script&gt;") != null);
 }

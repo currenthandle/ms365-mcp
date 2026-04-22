@@ -72,34 +72,34 @@ pub fn handleUpdateCalendarEvent(ctx: ToolContext) void {
     const event_id = ctx.getPathArg(args, "eventId", "Missing 'eventId' argument.") orelse return;
 
     // Build PATCH body with only provided fields.
-    var update_obj = std.json.ObjectMap.init(ctx.allocator);
-    defer update_obj.deinit();
+    var update_obj: std.json.ObjectMap = .empty;
+    defer update_obj.deinit(ctx.allocator);
 
     if (json_rpc.getStringArg(args, "subject")) |s|
-        update_obj.put("subject", .{ .string = s }) catch return;
+        update_obj.put(ctx.allocator, "subject", .{ .string = s }) catch return;
 
     if (json_rpc.getStringArg(args, "startDateTime")) |s| {
-        var obj = std.json.ObjectMap.init(ctx.allocator);
-        obj.put("dateTime", .{ .string = s }) catch return;
-        obj.put("timeZone", .{ .string = ctx.state.timezone }) catch return;
-        update_obj.put("start", .{ .object = obj }) catch return;
+        var obj: std.json.ObjectMap = .empty;
+        obj.put(ctx.allocator, "dateTime", .{ .string = s }) catch return;
+        obj.put(ctx.allocator, "timeZone", .{ .string = ctx.state.timezone }) catch return;
+        update_obj.put(ctx.allocator, "start", .{ .object = obj }) catch return;
     }
     if (json_rpc.getStringArg(args, "endDateTime")) |e| {
-        var obj = std.json.ObjectMap.init(ctx.allocator);
-        obj.put("dateTime", .{ .string = e }) catch return;
-        obj.put("timeZone", .{ .string = ctx.state.timezone }) catch return;
-        update_obj.put("end", .{ .object = obj }) catch return;
+        var obj: std.json.ObjectMap = .empty;
+        obj.put(ctx.allocator, "dateTime", .{ .string = e }) catch return;
+        obj.put(ctx.allocator, "timeZone", .{ .string = ctx.state.timezone }) catch return;
+        update_obj.put(ctx.allocator, "end", .{ .object = obj }) catch return;
     }
     if (json_rpc.getStringArg(args, "body")) |b| {
-        var obj = std.json.ObjectMap.init(ctx.allocator);
-        obj.put("contentType", .{ .string = "Text" }) catch return;
-        obj.put("content", .{ .string = b }) catch return;
-        update_obj.put("body", .{ .object = obj }) catch return;
+        var obj: std.json.ObjectMap = .empty;
+        obj.put(ctx.allocator, "contentType", .{ .string = "Text" }) catch return;
+        obj.put(ctx.allocator, "content", .{ .string = b }) catch return;
+        update_obj.put(ctx.allocator, "body", .{ .object = obj }) catch return;
     }
     if (json_rpc.getStringArg(args, "location")) |l| {
-        var obj = std.json.ObjectMap.init(ctx.allocator);
-        obj.put("displayName", .{ .string = l }) catch return;
-        update_obj.put("location", .{ .object = obj }) catch return;
+        var obj: std.json.ObjectMap = .empty;
+        obj.put(ctx.allocator, "displayName", .{ .string = l }) catch return;
+        update_obj.put(ctx.allocator, "location", .{ .object = obj }) catch return;
     }
 
     var json_buf: std.Io.Writer.Allocating = .init(ctx.allocator);

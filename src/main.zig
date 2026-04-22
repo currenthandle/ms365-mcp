@@ -22,7 +22,7 @@ const Reader = std.Io.Reader;
 const Writer = std.Io.Writer;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -228,6 +228,8 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
                         channel_tools.handleListChannelMessages(ctx);
                     } else if (std.mem.eql(u8, name, "get-channel-message-replies")) {
                         channel_tools.handleGetChannelMessageReplies(ctx);
+                    } else if (std.mem.eql(u8, name, "post-channel-message")) {
+                        channel_tools.handlePostChannelMessage(ctx);
                     } else if (std.mem.eql(u8, name, "reply-to-channel-message")) {
                         channel_tools.handleReplyToChannelMessage(ctx);
                     } else if (std.mem.eql(u8, name, "delete-email")) {
