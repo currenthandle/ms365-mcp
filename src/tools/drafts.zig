@@ -264,6 +264,11 @@ pub fn handleRemoveAttachment(ctx: ToolContext) void {
 // ---------------------------------------------------------------
 
 /// Extract the top-level "id" field from a JSON response string.
+/// Returns a newly-allocated string the caller must free (or the static
+/// literal "(unknown)" on any failure, which must NOT be freed — the caller
+/// is responsible for knowing the difference; currently every caller leaks
+/// this result, which is acceptable for tool-response strings that live the
+/// length of one JSON-RPC turn).
 fn extractJsonId(allocator: std.mem.Allocator, json_text: []const u8) []const u8 {
     const parsed = std.json.parseFromSlice(Value, allocator, json_text, .{}) catch return "(unknown)";
     defer parsed.deinit();
@@ -271,10 +276,13 @@ fn extractJsonId(allocator: std.mem.Allocator, json_text: []const u8) []const u8
         .object => |o| o.get("id") orelse return "(unknown)",
         else => return "(unknown)",
     };
-    return switch (id_val) {
+    const id_str = switch (id_val) {
         .string => |s| s,
-        else => "(unknown)",
+        else => return "(unknown)",
     };
+    // id_str points into parsed's arena which defer-frees at scope end.
+    // Duplicate it so the caller sees a stable pointer.
+    return allocator.dupe(u8, id_str) catch "(unknown)";
 }
 
 /// Infer MIME type from file extension.
