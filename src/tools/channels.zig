@@ -6,6 +6,28 @@ const graph = @import("../graph.zig");
 const json_rpc = @import("../json_rpc.zig");
 const ToolContext = @import("context.zig").ToolContext;
 
+const ObjectMap = std.json.ObjectMap;
+
+/// Everything every channel-scoped handler needs: an auth token plus a
+/// team+channel ID pair extracted from the tool arguments.
+/// Returned by `authAndChannel`; handlers short-circuit via `orelse return`.
+const ChannelAuth = struct {
+    token: []const u8,
+    args: ObjectMap,
+    team_id: []const u8,
+    channel_id: []const u8,
+};
+
+/// Shared prelude for channel handlers that need a team+channel path.
+/// Returns null (after sending a tool error) if auth fails or either ID is missing.
+fn authAndChannel(ctx: ToolContext, missing_args_msg: []const u8) ?ChannelAuth {
+    const token = ctx.requireAuth() orelse return null;
+    const args = ctx.getArgs(missing_args_msg) orelse return null;
+    const team_id = ctx.getPathArg(args, "teamId", "Missing 'teamId' argument.") orelse return null;
+    const channel_id = ctx.getPathArg(args, "channelId", "Missing 'channelId' argument.") orelse return null;
+    return .{ .token = token, .args = args, .team_id = team_id, .channel_id = channel_id };
+}
+
 /// List the Teams the user has joined.
 pub fn handleListTeams(ctx: ToolContext) void {
     const token = ctx.requireAuth() orelse return;
@@ -96,15 +118,12 @@ pub fn handleGetChannelMessageReplies(ctx: ToolContext) void {
 
 /// Post a new top-level message to a Teams channel. Supports @mentions and optional subject.
 pub fn handlePostChannelMessage(ctx: ToolContext) void {
-    const token = ctx.requireAuth() orelse return;
-    const args = ctx.getArgs("Missing arguments. Provide teamId, channelId, and message.") orelse return;
-    const team_id = ctx.getPathArg(args, "teamId", "Missing 'teamId' argument.") orelse return;
-    const channel_id = ctx.getPathArg(args, "channelId", "Missing 'channelId' argument.") orelse return;
-    const message = ctx.getStringArg(args, "message", "Missing 'message' argument.") orelse return;
-    const mentions_str = json_rpc.getStringArg(args, "mentions");
-    const subject = json_rpc.getStringArg(args, "subject");
+    const ch = authAndChannel(ctx, "Missing arguments. Provide teamId, channelId, and message.") orelse return;
+    const message = ctx.getStringArg(ch.args, "message", "Missing 'message' argument.") orelse return;
+    const mentions_str = json_rpc.getStringArg(ch.args, "mentions");
+    const subject = json_rpc.getStringArg(ch.args, "subject");
 
-    const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages", .{ team_id, channel_id }) catch return;
+    const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages", .{ ch.team_id, ch.channel_id }) catch return;
     defer ctx.allocator.free(path);
 
     // Build the JSON body.
@@ -127,7 +146,7 @@ pub fn handlePostChannelMessage(ctx: ToolContext) void {
         w.writeAll("}") catch return;
     }
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, json_buf.written()) catch {
+    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, json_buf.written()) catch {
         ctx.sendResult("Failed to post channel message.");
         return;
     };
@@ -137,15 +156,12 @@ pub fn handlePostChannelMessage(ctx: ToolContext) void {
 
 /// Reply to a message thread in a Teams channel. Supports @mentions.
 pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
-    const token = ctx.requireAuth() orelse return;
-    const args = ctx.getArgs("Missing arguments. Provide teamId, channelId, messageId, and message.") orelse return;
-    const team_id = ctx.getPathArg(args, "teamId", "Missing 'teamId' argument.") orelse return;
-    const channel_id = ctx.getPathArg(args, "channelId", "Missing 'channelId' argument.") orelse return;
-    const message_id = ctx.getPathArg(args, "messageId", "Missing 'messageId' argument.") orelse return;
-    const message = ctx.getStringArg(args, "message", "Missing 'message' argument.") orelse return;
-    const mentions_str = json_rpc.getStringArg(args, "mentions");
+    const ch = authAndChannel(ctx, "Missing arguments. Provide teamId, channelId, messageId, and message.") orelse return;
+    const message_id = ctx.getPathArg(ch.args, "messageId", "Missing 'messageId' argument.") orelse return;
+    const message = ctx.getStringArg(ch.args, "message", "Missing 'message' argument.") orelse return;
+    const mentions_str = json_rpc.getStringArg(ch.args, "mentions");
 
-    const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/replies", .{ team_id, channel_id, message_id }) catch return;
+    const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/replies", .{ ch.team_id, ch.channel_id, message_id }) catch return;
     defer ctx.allocator.free(path);
 
     // Build the JSON body.
@@ -163,7 +179,7 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
         std.json.Stringify.value(body, .{}, w) catch return;
     }
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, json_buf.written()) catch {
+    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, json_buf.written()) catch {
         ctx.sendResult("Failed to send reply.");
         return;
     };
@@ -173,16 +189,13 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
 
 /// Soft-delete a channel message.
 pub fn handleDeleteChannelMessage(ctx: ToolContext) void {
-    const token = ctx.requireAuth() orelse return;
-    const args = ctx.getArgs("Missing arguments. Provide teamId, channelId, and messageId.") orelse return;
-    const team_id = ctx.getPathArg(args, "teamId", "Missing 'teamId' argument.") orelse return;
-    const channel_id = ctx.getPathArg(args, "channelId", "Missing 'channelId' argument.") orelse return;
-    const message_id = ctx.getPathArg(args, "messageId", "Missing 'messageId' argument.") orelse return;
+    const ch = authAndChannel(ctx, "Missing arguments. Provide teamId, channelId, and messageId.") orelse return;
+    const message_id = ctx.getPathArg(ch.args, "messageId", "Missing 'messageId' argument.") orelse return;
 
-    const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/softDelete", .{ team_id, channel_id, message_id }) catch return;
+    const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/softDelete", .{ ch.team_id, ch.channel_id, message_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch {
+    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, "{}") catch {
         ctx.sendResult("Failed to delete channel message.");
         return;
     };
@@ -192,17 +205,14 @@ pub fn handleDeleteChannelMessage(ctx: ToolContext) void {
 
 /// Soft-delete a reply to a channel message.
 pub fn handleDeleteChannelReply(ctx: ToolContext) void {
-    const token = ctx.requireAuth() orelse return;
-    const args = ctx.getArgs("Missing arguments. Provide teamId, channelId, messageId, and replyId.") orelse return;
-    const team_id = ctx.getPathArg(args, "teamId", "Missing 'teamId' argument.") orelse return;
-    const channel_id = ctx.getPathArg(args, "channelId", "Missing 'channelId' argument.") orelse return;
-    const message_id = ctx.getPathArg(args, "messageId", "Missing 'messageId' argument.") orelse return;
-    const reply_id = ctx.getPathArg(args, "replyId", "Missing 'replyId' argument.") orelse return;
+    const ch = authAndChannel(ctx, "Missing arguments. Provide teamId, channelId, messageId, and replyId.") orelse return;
+    const message_id = ctx.getPathArg(ch.args, "messageId", "Missing 'messageId' argument.") orelse return;
+    const reply_id = ctx.getPathArg(ch.args, "replyId", "Missing 'replyId' argument.") orelse return;
 
-    const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/replies/{s}/softDelete", .{ team_id, channel_id, message_id, reply_id }) catch return;
+    const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/replies/{s}/softDelete", .{ ch.team_id, ch.channel_id, message_id, reply_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch {
+    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, "{}") catch {
         ctx.sendResult("Failed to delete channel reply.");
         return;
     };
