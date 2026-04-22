@@ -199,7 +199,6 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
         };
         defer parsed.deinit();
 
-        // Extract the method string from the JSON-RPC message.
         const method = switch (parsed.value) {
             .object => |obj| if (obj.get("method")) |v| switch (v) {
                 .string => |s| s,
@@ -212,8 +211,6 @@ fn runMessageLoop(allocator: Allocator, io: std.Io, reader: *Reader, writer: *Wr
             std.debug.print("ms-mcp: method={s}\n", .{m});
 
             if (std.mem.eql(u8, m, "initialize")) {
-                // Respond with server info and capabilities.
-                // All fields use defaults from the struct definitions in types.zig.
                 json_rpc.sendJsonResponse(writer, types.JsonRpcResponse(types.InitializeResult){
                     .id = json_rpc.getRequestId(parsed.value),
                     .result = .{},

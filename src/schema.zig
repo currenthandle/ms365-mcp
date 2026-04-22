@@ -1,4 +1,9 @@
 // schema.zig — JSON Schema construction helpers for MCP tool definitions.
+//
+// Schemas are built once at server start (inside `tools/list` responses) and
+// live for the entire process lifetime. The `page` allocator below is used
+// intentionally: these maps are never freed, so a page allocator avoids the
+// tracking overhead of DebugAllocator for allocations that would "leak" anyway.
 
 const std = @import("std");
 
