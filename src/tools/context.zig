@@ -1,4 +1,21 @@
 // tools/context.zig — Shared context and helpers for tool handlers.
+//
+// Every tool handler takes a single parameter: a `ToolContext`. Think of it
+// as a request-scoped dependency injection container (allocator, I/O,
+// writer, auth state, parsed JSON-RPC request).
+//
+// The helpers on ToolContext (requireAuth, getArgs, getStringArg, ...) wrap
+// the raw json_rpc and state_mod functions and automatically send an error
+// response on the JSON-RPC writer if their precondition fails. A handler
+// typically looks like:
+//
+//     const token = ctx.requireAuth() orelse return;
+//     const args  = ctx.getArgs("Missing arguments.") orelse return;
+//     const name  = ctx.getStringArg(args, "name", "Missing 'name'.") orelse return;
+//     // ...do work, then ctx.sendResult("ok");
+//
+// Each `orelse return` short-circuits because the helper already wrote an
+// error to the client.
 
 const std = @import("std");
 const json_rpc = @import("../json_rpc.zig");

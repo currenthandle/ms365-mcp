@@ -1,4 +1,27 @@
 // main.zig — Entry point and message loop for the ms-mcp MCP server.
+//
+// Reading guide for engineers new to Zig (coming from TypeScript / similar):
+//
+// 1. The message loop reads JSON-RPC lines from stdin, dispatches them to a
+//    tool handler, and writes responses to stdout. Nothing fancy — same shape
+//    as a Node stdio server using a while(true) loop.
+//
+// 2. `try expr` propagates errors from `expr`; `expr catch |err| { ... }` is
+//    a try/catch. The return type `!void` means "void or error". Think
+//    `Promise<void>`-but-synchronous.
+//
+// 3. `?T` is an optional (like `T | null`). Unwrap with `x orelse default` or
+//    `if (x) |v| { ... }`. `x.?` is a force-unwrap that panics on null.
+//
+// 4. `defer x` runs `x` when the enclosing scope exits — Zig's equivalent of
+//    a `finally` block but per-scope and cumulative.
+//
+// 5. Allocators are passed explicitly. There is no GC; every heap allocation
+//    has a corresponding free, typically via `defer allocator.free(x)`.
+//
+// 6. Tool handlers live under src/tools/. Each one takes a ToolContext and
+//    returns void — they report success/failure via ctx.sendResult(). The
+//    dispatch table `tool_handlers` below maps tool name → handler.
 
 const std = @import("std");
 const types = @import("types.zig");

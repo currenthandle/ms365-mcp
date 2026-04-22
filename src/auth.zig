@@ -1,4 +1,11 @@
 // auth.zig — OAuth 2.0 Device Code Flow for Microsoft 365.
+//
+// Memory ownership note: the access_token and refresh_token strings returned
+// from here are heap-allocated with the caller's allocator. The `State`
+// struct in state.zig takes ownership; when tokens are refreshed, the old
+// copies must be freed before the new ones are stored (see state.zig).
+// If you extract token logic to a new module, preserve this invariant — a
+// leak here is process-lifetime because State lives for the whole session.
 
 const std = @import("std");
 const http = @import("http.zig");
