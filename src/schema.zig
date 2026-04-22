@@ -21,6 +21,29 @@ pub fn emptySchema() Value {
     return .{ .object = obj };
 }
 
+/// Declarative description of a single JSON Schema property.
+/// Used with `buildProps` to describe tool inputs as data rather than
+/// imperative put() calls.
+pub const PropSpec = struct {
+    name: []const u8,
+    type: []const u8,
+    description: []const u8,
+};
+
+/// Build an ObjectMap of JSON Schema properties from a list of specs.
+/// Returns null if any allocation fails (matches the pattern used by callers
+/// that `orelse return null` on construction failure).
+pub fn buildProps(
+    allocator: std.mem.Allocator,
+    specs: []const PropSpec,
+) ?ObjectMap {
+    var map: ObjectMap = .empty;
+    for (specs) |spec| {
+        map.put(allocator, spec.name, schemaProperty(spec.type, spec.description)) catch return null;
+    }
+    return map;
+}
+
 pub fn buildSchema(properties: ObjectMap, required: []const []const u8) Value {
     var obj: ObjectMap = .empty;
     obj.put(page, "type", .{ .string = "object" }) catch {};
