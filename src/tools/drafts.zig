@@ -6,6 +6,7 @@ const graph = @import("../graph.zig");
 const json_rpc = @import("../json_rpc.zig");
 const ToolContext = @import("context.zig").ToolContext;
 const email_tools = @import("email.zig");
+const mime = @import("../mime.zig");
 
 const Value = std.json.Value;
 const ObjectMap = std.json.ObjectMap;
@@ -187,7 +188,7 @@ pub fn handleAddAttachment(ctx: ToolContext) void {
         if (std.mem.lastIndexOfScalar(u8, file_path, '/')) |idx| break :blk file_path[idx + 1 ..];
         break :blk file_path;
     };
-    const content_type = json_rpc.getStringArg(args, "contentType") orelse inferMimeType(file_path);
+    const content_type = json_rpc.getStringArg(args, "contentType") orelse mime.fromPath(file_path);
 
     const is_inline = if (args.get("isInline")) |v| switch (v) { .bool => |b| b, else => false } else false;
     const content_id = json_rpc.getStringArg(args, "contentId");
@@ -285,24 +286,3 @@ fn extractJsonId(allocator: std.mem.Allocator, json_text: []const u8) []const u8
     return allocator.dupe(u8, id_str) catch "(unknown)";
 }
 
-/// Infer MIME type from file extension.
-fn inferMimeType(file_path: []const u8) []const u8 {
-    const ext = std.fs.path.extension(file_path);
-    if (std.mem.eql(u8, ext, ".png")) return "image/png";
-    if (std.mem.eql(u8, ext, ".jpg") or std.mem.eql(u8, ext, ".jpeg")) return "image/jpeg";
-    if (std.mem.eql(u8, ext, ".gif")) return "image/gif";
-    if (std.mem.eql(u8, ext, ".pdf")) return "application/pdf";
-    if (std.mem.eql(u8, ext, ".doc")) return "application/msword";
-    if (std.mem.eql(u8, ext, ".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    if (std.mem.eql(u8, ext, ".xls")) return "application/vnd.ms-excel";
-    if (std.mem.eql(u8, ext, ".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    if (std.mem.eql(u8, ext, ".ppt")) return "application/vnd.ms-powerpoint";
-    if (std.mem.eql(u8, ext, ".pptx")) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-    if (std.mem.eql(u8, ext, ".txt")) return "text/plain";
-    if (std.mem.eql(u8, ext, ".csv")) return "text/csv";
-    if (std.mem.eql(u8, ext, ".html") or std.mem.eql(u8, ext, ".htm")) return "text/html";
-    if (std.mem.eql(u8, ext, ".zip")) return "application/zip";
-    if (std.mem.eql(u8, ext, ".svg")) return "image/svg+xml";
-    if (std.mem.eql(u8, ext, ".webp")) return "image/webp";
-    return "application/octet-stream";
-}

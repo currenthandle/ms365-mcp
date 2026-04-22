@@ -238,6 +238,22 @@ const sp_list_items_props = [_]PropSpec{
     .{ .name = "folderPath", .type = "string", .description = "Optional folder path relative to drive root (e.g. '2026/Q1'). Omit to list root." },
 };
 
+const sp_upload_file_props = [_]PropSpec{
+    sp_site_id_prop,
+    sp_drive_id_prop,
+    .{ .name = "path", .type = "string", .description = "Destination path in the drive (e.g. '2026/Q1/report.pdf'). Must not start with '/' or contain '..'." },
+    .{ .name = "filePath", .type = "string", .description = "Local absolute path to the file to upload (e.g. '/Users/casey/report.pdf')." },
+    .{ .name = "contentType", .type = "string", .description = "Optional MIME type override. Auto-detected from extension if omitted." },
+};
+
+const sp_upload_content_props = [_]PropSpec{
+    sp_site_id_prop,
+    sp_drive_id_prop,
+    .{ .name = "path", .type = "string", .description = "Destination path in the drive (e.g. 'notes/meeting.md'). Must not start with '/' or contain '..'." },
+    .{ .name = "content", .type = "string", .description = "Raw content to upload (markdown, text, JSON, etc.)." },
+    .{ .name = "contentType", .type = "string", .description = "Optional MIME type override. Auto-detected from the path's extension if omitted." },
+};
+
 // --- Full list of tools, in the order they appear in tools/list output. ---
 // Grouped by category. Do not reorder without checking client-side expectations.
 
@@ -434,6 +450,18 @@ const all_tools = [_]ToolSpec{
         .description = "List files and folders inside a SharePoint drive. Omit folderPath to list the drive root, or pass a path like '2026/Q1' to list a sub-folder. Returns item IDs, names, sizes, and types.",
         .props = &sp_list_items_props,
         .required = &.{ "siteId", "driveId" },
+    },
+    .{
+        .name = "upload-sharepoint-file",
+        .description = "Upload a local file from disk to a SharePoint drive at the given path. Auto-chunks files larger than 4 MB. Overwrites any existing file at the destination.",
+        .props = &sp_upload_file_props,
+        .required = &.{ "siteId", "driveId", "path", "filePath" },
+    },
+    .{
+        .name = "upload-sharepoint-content",
+        .description = "Upload a raw string (markdown, text, JSON, etc.) to a SharePoint drive at the given path. Auto-chunks content larger than 4 MB. Overwrites any existing file at the destination.",
+        .props = &sp_upload_content_props,
+        .required = &.{ "siteId", "driveId", "path", "content" },
     },
     // --- Utility ---
     .{

@@ -96,6 +96,8 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "search-sharepoint-sites", sharepoint_tools.handleSearchSites },
     .{ "list-sharepoint-drives", sharepoint_tools.handleListDrives },
     .{ "list-sharepoint-items", sharepoint_tools.handleListItems },
+    .{ "upload-sharepoint-file", sharepoint_tools.handleUploadFile },
+    .{ "upload-sharepoint-content", sharepoint_tools.handleUploadContent },
     // --- Utility ---
     .{ "search-users", user_tools.handleSearchUsers },
     .{ "get-profile", user_tools.handleGetProfile },
