@@ -212,6 +212,32 @@ const send_chat_props = [_]PropSpec{
     .{ .name = "message", .type = "string", .description = "The message text to send" },
 };
 
+// --- SharePoint props ---
+
+const sp_site_id_prop = PropSpec{
+    .name = "siteId",
+    .type = "string",
+    .description = "The ID of the SharePoint site (from search-sharepoint-sites)",
+};
+
+const sp_drive_id_prop = PropSpec{
+    .name = "driveId",
+    .type = "string",
+    .description = "The ID of the document library (from list-sharepoint-drives)",
+};
+
+const sp_search_sites_props = [_]PropSpec{
+    .{ .name = "query", .type = "string", .description = "Site name or keyword to search for" },
+};
+
+const sp_list_drives_props = [_]PropSpec{sp_site_id_prop};
+
+const sp_list_items_props = [_]PropSpec{
+    sp_site_id_prop,
+    sp_drive_id_prop,
+    .{ .name = "folderPath", .type = "string", .description = "Optional folder path relative to drive root (e.g. '2026/Q1'). Omit to list root." },
+};
+
 // --- Full list of tools, in the order they appear in tools/list output. ---
 // Grouped by category. Do not reorder without checking client-side expectations.
 
@@ -389,6 +415,25 @@ const all_tools = [_]ToolSpec{
         .description = "Soft-delete a reply to a message in a Teams channel.",
         .props = &delete_chan_reply_props,
         .required = &.{ "teamId", "channelId", "messageId", "replyId" },
+    },
+    // --- SharePoint ---
+    .{
+        .name = "search-sharepoint-sites",
+        .description = "Search SharePoint sites by name or keyword. Returns site IDs, display names, and web URLs. Use this first to find the site you want to interact with.",
+        .props = &sp_search_sites_props,
+        .required = &.{"query"},
+    },
+    .{
+        .name = "list-sharepoint-drives",
+        .description = "List document libraries (drives) in a SharePoint site. Every site has at least one drive (usually 'Documents'). Use search-sharepoint-sites first to get the siteId.",
+        .props = &sp_list_drives_props,
+        .required = &.{"siteId"},
+    },
+    .{
+        .name = "list-sharepoint-items",
+        .description = "List files and folders inside a SharePoint drive. Omit folderPath to list the drive root, or pass a path like '2026/Q1' to list a sub-folder. Returns item IDs, names, sizes, and types.",
+        .props = &sp_list_items_props,
+        .required = &.{ "siteId", "driveId" },
     },
     // --- Utility ---
     .{

@@ -36,6 +36,7 @@ const draft_tools = @import("tools/drafts.zig");
 const calendar_tools = @import("tools/calendar.zig");
 const chat_tools = @import("tools/chat.zig");
 const channel_tools = @import("tools/channels.zig");
+const sharepoint_tools = @import("tools/sharepoint.zig");
 const user_tools = @import("tools/users.zig");
 const ToolContext = @import("tools/context.zig").ToolContext;
 
@@ -91,6 +92,10 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "reply-to-channel-message", channel_tools.handleReplyToChannelMessage },
     .{ "delete-channel-message", channel_tools.handleDeleteChannelMessage },
     .{ "delete-channel-reply", channel_tools.handleDeleteChannelReply },
+    // --- SharePoint ---
+    .{ "search-sharepoint-sites", sharepoint_tools.handleSearchSites },
+    .{ "list-sharepoint-drives", sharepoint_tools.handleListDrives },
+    .{ "list-sharepoint-items", sharepoint_tools.handleListItems },
     // --- Utility ---
     .{ "search-users", user_tools.handleSearchUsers },
     .{ "get-profile", user_tools.handleGetProfile },
