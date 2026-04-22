@@ -3,6 +3,9 @@
 const std = @import("std");
 const types = @import("types.zig");
 
+const Value = std.json.Value;
+const ObjectMap = std.json.ObjectMap;
+
 // Re-export I/O types so other modules can reference them without
 // importing std directly for these specific aliases.
 pub const Writer = std.Io.Writer;
@@ -10,7 +13,7 @@ pub const Writer = std.Io.Writer;
 /// Extract the integer "id" field from a JSON-RPC message object.
 /// JSON-RPC clients assign an id to each request so they can match our response.
 /// Returns 0 if missing or not an integer.
-pub fn getRequestId(value: std.json.Value) i64 {
+pub fn getRequestId(value: Value) i64 {
     // We can only look up "id" if the value is a JSON object.
     const obj = switch (value) {
         .object => |o| o,
@@ -28,7 +31,7 @@ pub fn getRequestId(value: std.json.Value) i64 {
 /// Extract the tool name from a "tools/call" request.
 /// In JSON-RPC, tool calls look like: {"params": {"name": "login", ...}}
 /// Returns null if missing or malformed.
-pub fn getToolName(value: std.json.Value) ?[]const u8 {
+pub fn getToolName(value: Value) ?[]const u8 {
     // Same pattern as getRequestId — unwrap one layer at a time.
     const obj = switch (value) {
         .object => |o| o,
@@ -52,7 +55,7 @@ pub fn getToolName(value: std.json.Value) ?[]const u8 {
 /// Tool calls with parameters look like:
 ///   {"params": {"name": "send-email", "arguments": {"to": "...", "subject": "..."}}}
 /// Returns the arguments as a JSON ObjectMap, or null if missing.
-pub fn getToolArgs(value: std.json.Value) ?std.json.ObjectMap {
+pub fn getToolArgs(value: Value) ?ObjectMap {
     const obj = switch (value) {
         .object => |o| o,
         else => return null,
@@ -72,7 +75,7 @@ pub fn getToolArgs(value: std.json.Value) ?std.json.ObjectMap {
 
 /// Helper to extract a string value from a JSON ObjectMap.
 /// Returns null if the key is missing or the value isn't a string.
-pub fn getStringArg(args: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+pub fn getStringArg(args: ObjectMap, key: []const u8) ?[]const u8 {
     const val = args.get(key) orelse return null;
     return switch (val) {
         .string => |s| s,
@@ -83,7 +86,7 @@ pub fn getStringArg(args: std.json.ObjectMap, key: []const u8) ?[]const u8 {
 /// Extract and validate a numeric "top" parameter for pagination.
 /// Returns a valid numeric string between 1 and 50, or the default "50".
 /// Rejects non-numeric values that could inject OData query parameters.
-pub fn getTopArg(args: std.json.ObjectMap) []const u8 {
+pub fn getTopArg(args: ObjectMap) []const u8 {
     const val = getStringArg(args, "top") orelse return "50";
     // Validate it's a pure numeric string.
     for (val) |c| {
@@ -99,7 +102,7 @@ pub fn getTopArg(args: std.json.ObjectMap) []const u8 {
 /// Extract a string argument that will be used in a Graph API URL path segment.
 /// Rejects values containing '/', '?', '&', '#' to prevent path traversal
 /// and OData query injection attacks.
-pub fn getPathArg(args: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+pub fn getPathArg(args: ObjectMap, key: []const u8) ?[]const u8 {
     const val = getStringArg(args, key) orelse return null;
     for (val) |c| {
         switch (c) {
@@ -131,8 +134,8 @@ pub fn sendJsonResponse(writer: *Writer, response: anytype) void {
 const testing = std.testing;
 
 /// Parse a JSON string into a Value for testing.
-fn parseTestJson(json: []const u8) !std.json.Parsed(std.json.Value) {
-    return std.json.parseFromSlice(std.json.Value, testing.allocator, json, .{});
+fn parseTestJson(json: []const u8) !std.json.Parsed(Value) {
+    return std.json.parseFromSlice(Value, testing.allocator, json, .{});
 }
 
 test "getRequestId extracts integer id" {

@@ -7,6 +7,10 @@ const json_rpc = @import("../json_rpc.zig");
 const ToolContext = @import("context.zig").ToolContext;
 const email_tools = @import("email.zig");
 
+const Value = std.json.Value;
+const ObjectMap = std.json.ObjectMap;
+const Array = std.json.Array;
+
 /// Create a draft email (saved to Drafts folder, not sent).
 pub fn handleCreateDraft(ctx: ToolContext) void {
     const token = ctx.requireAuth() orelse return;
@@ -83,7 +87,7 @@ pub fn handleUpdateDraft(ctx: ToolContext) void {
     const draft_id = ctx.getPathArg(args, "draftId", "Missing 'draftId' argument.") orelse return;
 
     // Build PATCH body with only provided fields.
-    var patch_obj: std.json.ObjectMap = .empty;
+    var patch_obj: ObjectMap = .empty;
     defer patch_obj.deinit(ctx.allocator);
 
     if (json_rpc.getStringArg(args, "subject")) |subject|
@@ -96,7 +100,7 @@ pub fn handleUpdateDraft(ctx: ToolContext) void {
             std.mem.indexOf(u8, body_text, "<br") != null or
             std.mem.indexOf(u8, body_text, "<img") != null or
             std.mem.indexOf(u8, body_text, "<table") != null;
-        var body_obj: std.json.ObjectMap = .empty;
+        var body_obj: ObjectMap = .empty;
         body_obj.put(ctx.allocator, "contentType", .{ .string = if (is_html) "HTML" else "Text" }) catch return;
         body_obj.put(ctx.allocator, "content", .{ .string = body_text }) catch return;
         patch_obj.put(ctx.allocator, "body", .{ .object = body_obj }) catch return;
@@ -106,11 +110,11 @@ pub fn handleUpdateDraft(ctx: ToolContext) void {
     inline for (.{ .{ "to", "toRecipients" }, .{ "cc", "ccRecipients" }, .{ "bcc", "bccRecipients" } }) |pair| {
         if (email_tools.parseRecipients(ctx.allocator, args, pair[0]) catch return) |recipients| {
             defer ctx.allocator.free(recipients);
-            var arr = std.json.Array.initCapacity(ctx.allocator, recipients.len) catch return;
+            var arr = Array.initCapacity(ctx.allocator, recipients.len) catch return;
             for (recipients) |r| {
-                var email_obj: std.json.ObjectMap = .empty;
+                var email_obj: ObjectMap = .empty;
                 email_obj.put(ctx.allocator, "address", .{ .string = r.emailAddress.address }) catch return;
-                var recip_obj: std.json.ObjectMap = .empty;
+                var recip_obj: ObjectMap = .empty;
                 recip_obj.put(ctx.allocator, "emailAddress", .{ .object = email_obj }) catch return;
                 arr.appendAssumeCapacity(.{ .object = recip_obj });
             }
@@ -120,7 +124,7 @@ pub fn handleUpdateDraft(ctx: ToolContext) void {
 
     var json_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
     defer json_buf.deinit();
-    std.json.Stringify.value(std.json.Value{ .object = patch_obj }, .{}, &json_buf.writer) catch return;
+    std.json.Stringify.value(Value{ .object = patch_obj }, .{}, &json_buf.writer) catch return;
 
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}", .{draft_id}) catch return;
     defer ctx.allocator.free(path);
@@ -190,7 +194,7 @@ pub fn handleAddAttachment(ctx: ToolContext) void {
     const content_id = json_rpc.getStringArg(args, "contentId");
 
     // Build attachment JSON.
-    var obj: std.json.ObjectMap = .empty;
+    var obj: ObjectMap = .empty;
     defer obj.deinit(ctx.allocator);
     obj.put(ctx.allocator, "@odata.type", .{ .string = "#microsoft.graph.fileAttachment" }) catch return;
     obj.put(ctx.allocator, "name", .{ .string = file_name }) catch return;
@@ -203,7 +207,7 @@ pub fn handleAddAttachment(ctx: ToolContext) void {
 
     var json_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
     defer json_buf.deinit();
-    std.json.Stringify.value(std.json.Value{ .object = obj }, .{}, &json_buf.writer) catch return;
+    std.json.Stringify.value(Value{ .object = obj }, .{}, &json_buf.writer) catch return;
 
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}/attachments", .{draft_id}) catch return;
     defer ctx.allocator.free(path);
@@ -262,7 +266,7 @@ pub fn handleRemoveAttachment(ctx: ToolContext) void {
 
 /// Extract the top-level "id" field from a JSON response string.
 fn extractJsonId(allocator: std.mem.Allocator, json_text: []const u8) []const u8 {
-    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_text, .{}) catch return "(unknown)";
+    const parsed = std.json.parseFromSlice(Value, allocator, json_text, .{}) catch return "(unknown)";
     defer parsed.deinit();
     const id_val = switch (parsed.value) {
         .object => |o| o.get("id") orelse return "(unknown)",

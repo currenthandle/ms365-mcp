@@ -4,13 +4,15 @@ const std = @import("std");
 const types = @import("../types.zig");
 const schema = @import("../schema.zig");
 
+const ObjectMap = std.json.ObjectMap;
+
 /// Build and return the complete list of tool definitions for all MCP tools.
 /// Returns null if any allocation fails during schema construction.
 /// `catch return null` is used throughout because ObjectMap.put can fail on OOM.
 pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinition {
 
     // --- send-email schema ---
-    var send_email_props = @as(std.json.ObjectMap, .empty);
+    var send_email_props = @as(ObjectMap, .empty);
     send_email_props.put(allocator, "to", schema.schemaProperty("array", "Array of recipient email addresses")) catch return null;
     send_email_props.put(allocator, "subject", schema.schemaProperty("string", "Email subject line")) catch return null;
     send_email_props.put(allocator, "body", schema.schemaProperty("string", "Email body text")) catch return null;
@@ -18,11 +20,11 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
     send_email_props.put(allocator, "bcc", schema.schemaProperty("array", "Optional array of BCC email addresses")) catch return null;
 
     // --- send-draft schema ---
-    var send_draft_props = @as(std.json.ObjectMap, .empty);
+    var send_draft_props = @as(ObjectMap, .empty);
     send_draft_props.put(allocator, "draftId", schema.schemaProperty("string", "The ID of the draft to send (from create-draft)")) catch return null;
 
     // --- update-draft schema ---
-    var update_draft_props = @as(std.json.ObjectMap, .empty);
+    var update_draft_props = @as(ObjectMap, .empty);
     update_draft_props.put(allocator, "draftId", schema.schemaProperty("string", "The ID of the draft to update (from create-draft)")) catch return null;
     update_draft_props.put(allocator, "subject", schema.schemaProperty("string", "New email subject line")) catch return null;
     update_draft_props.put(allocator, "body", schema.schemaProperty("string", "New email body text")) catch return null;
@@ -31,11 +33,11 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
     update_draft_props.put(allocator, "bcc", schema.schemaProperty("array", "New array of BCC email addresses")) catch return null;
 
     // --- delete-draft schema ---
-    var delete_draft_props = @as(std.json.ObjectMap, .empty);
+    var delete_draft_props = @as(ObjectMap, .empty);
     delete_draft_props.put(allocator, "draftId", schema.schemaProperty("string", "The ID of the draft to delete (from create-draft)")) catch return null;
 
     // --- add-attachment schema ---
-    var add_attach_props = @as(std.json.ObjectMap, .empty);
+    var add_attach_props = @as(ObjectMap, .empty);
     add_attach_props.put(allocator, "draftId", schema.schemaProperty("string", "The ID of the draft to attach to (from create-draft)")) catch return null;
     add_attach_props.put(allocator, "filePath", schema.schemaProperty("string", "Absolute path to the file on disk (e.g. '/Users/casey/report.pdf')")) catch return null;
     add_attach_props.put(allocator, "name", schema.schemaProperty("string", "Optional display name override (defaults to filename from path)")) catch return null;
@@ -44,47 +46,47 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
     add_attach_props.put(allocator, "contentId", schema.schemaProperty("string", "Content ID for inline images — referenced in HTML body as <img src=\"cid:THIS_VALUE\">")) catch return null;
 
     // --- list-attachments schema ---
-    var list_attach_props = @as(std.json.ObjectMap, .empty);
+    var list_attach_props = @as(ObjectMap, .empty);
     list_attach_props.put(allocator, "draftId", schema.schemaProperty("string", "The ID of the draft to list attachments for")) catch return null;
 
     // --- remove-attachment schema ---
-    var remove_attach_props = @as(std.json.ObjectMap, .empty);
+    var remove_attach_props = @as(ObjectMap, .empty);
     remove_attach_props.put(allocator, "draftId", schema.schemaProperty("string", "The ID of the draft containing the attachment")) catch return null;
     remove_attach_props.put(allocator, "attachmentId", schema.schemaProperty("string", "The ID of the attachment to remove (from list-attachments)")) catch return null;
 
     // --- list-chats schema ---
-    var list_chats_props = @as(std.json.ObjectMap, .empty);
+    var list_chats_props = @as(ObjectMap, .empty);
     list_chats_props.put(allocator, "top", schema.schemaProperty("string", "Number of chats to return per page (1-50, default 50)")) catch return null;
     list_chats_props.put(allocator, "pageToken", schema.schemaProperty("string", "Pagination token — pass the nextLink value from a previous response to get the next page")) catch return null;
 
     // --- list-chat-messages schema ---
-    var chat_msgs_props = @as(std.json.ObjectMap, .empty);
+    var chat_msgs_props = @as(ObjectMap, .empty);
     chat_msgs_props.put(allocator, "chatId", schema.schemaProperty("string", "The ID of the chat to read messages from")) catch return null;
     chat_msgs_props.put(allocator, "top", schema.schemaProperty("string", "Number of messages to return per page (1-50, default 50)")) catch return null;
     chat_msgs_props.put(allocator, "pageToken", schema.schemaProperty("string", "Pagination token — pass the nextLink value from a previous response to get the next page")) catch return null;
 
     // --- search-users schema ---
-    var search_users_props = @as(std.json.ObjectMap, .empty);
+    var search_users_props = @as(ObjectMap, .empty);
     search_users_props.put(allocator, "query", schema.schemaProperty("string", "Person's name to search for (e.g. 'Berry Cheung')")) catch return null;
 
     // --- create-chat schema ---
-    var create_chat_props = @as(std.json.ObjectMap, .empty);
+    var create_chat_props = @as(ObjectMap, .empty);
     create_chat_props.put(allocator, "emailOne", schema.schemaProperty("string", "First member's email address (use search-users to find it)")) catch return null;
     create_chat_props.put(allocator, "emailTwo", schema.schemaProperty("string", "Second member's email address")) catch return null;
 
     // --- list-channels schema ---
-    var list_channels_props = @as(std.json.ObjectMap, .empty);
+    var list_channels_props = @as(ObjectMap, .empty);
     list_channels_props.put(allocator, "teamId", schema.schemaProperty("string", "The ID of the team (from list-teams)")) catch return null;
 
     // --- list-channel-messages schema ---
-    var list_chan_msgs_props = @as(std.json.ObjectMap, .empty);
+    var list_chan_msgs_props = @as(ObjectMap, .empty);
     list_chan_msgs_props.put(allocator, "teamId", schema.schemaProperty("string", "The ID of the team (from list-teams)")) catch return null;
     list_chan_msgs_props.put(allocator, "channelId", schema.schemaProperty("string", "The ID of the channel (from list-channels)")) catch return null;
     list_chan_msgs_props.put(allocator, "top", schema.schemaProperty("string", "Number of messages to return per page (1-50, default 50)")) catch return null;
     list_chan_msgs_props.put(allocator, "pageToken", schema.schemaProperty("string", "Pagination token — pass the nextLink value from a previous response to get the next page")) catch return null;
 
     // --- get-channel-message-replies schema ---
-    var chan_replies_props = @as(std.json.ObjectMap, .empty);
+    var chan_replies_props = @as(ObjectMap, .empty);
     chan_replies_props.put(allocator, "teamId", schema.schemaProperty("string", "The ID of the team (from list-teams)")) catch return null;
     chan_replies_props.put(allocator, "channelId", schema.schemaProperty("string", "The ID of the channel (from list-channels)")) catch return null;
     chan_replies_props.put(allocator, "messageId", schema.schemaProperty("string", "The ID of the top-level message/post (from list-channel-messages)")) catch return null;
@@ -92,7 +94,7 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
     chan_replies_props.put(allocator, "pageToken", schema.schemaProperty("string", "Pagination token — pass the nextLink value from a previous response to get the next page")) catch return null;
 
     // --- post-channel-message schema ---
-    var post_chan_props = @as(std.json.ObjectMap, .empty);
+    var post_chan_props = @as(ObjectMap, .empty);
     post_chan_props.put(allocator, "teamId", schema.schemaProperty("string", "The ID of the team (from list-teams)")) catch return null;
     post_chan_props.put(allocator, "channelId", schema.schemaProperty("string", "The ID of the channel (from list-channels)")) catch return null;
     post_chan_props.put(allocator, "message", schema.schemaProperty("string", "The message text to post. Use @Name for mentions (requires mentions parameter).")) catch return null;
@@ -100,7 +102,7 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
     post_chan_props.put(allocator, "mentions", schema.schemaProperty("string", "Optional comma-separated mention list: 'DisplayName|userId,Name2|userId2'. The userId is the Azure AD user ID found in from.user.id of channel messages. Each @Name in the message text will become a clickable Teams mention.")) catch return null;
 
     // --- reply-to-channel-message schema ---
-    var chan_reply_props = @as(std.json.ObjectMap, .empty);
+    var chan_reply_props = @as(ObjectMap, .empty);
     chan_reply_props.put(allocator, "teamId", schema.schemaProperty("string", "The ID of the team (from list-teams)")) catch return null;
     chan_reply_props.put(allocator, "channelId", schema.schemaProperty("string", "The ID of the channel (from list-channels)")) catch return null;
     chan_reply_props.put(allocator, "messageId", schema.schemaProperty("string", "The ID of the top-level message/post to reply to (from list-channel-messages)")) catch return null;
@@ -108,29 +110,29 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
     chan_reply_props.put(allocator, "mentions", schema.schemaProperty("string", "Optional comma-separated mention list: 'DisplayName|userId,Name2|userId2'. The userId is the Azure AD user ID found in from.user.id of channel messages. Each @Name in the message text will become a clickable Teams mention.")) catch return null;
 
     // --- delete-email schema ---
-    var delete_email_props = @as(std.json.ObjectMap, .empty);
+    var delete_email_props = @as(ObjectMap, .empty);
     delete_email_props.put(allocator, "emailId", schema.schemaProperty("string", "The ID of the email to delete (from list-emails or read-email)")) catch return null;
 
     // --- delete-chat-message schema ---
-    var delete_chat_msg_props = @as(std.json.ObjectMap, .empty);
+    var delete_chat_msg_props = @as(ObjectMap, .empty);
     delete_chat_msg_props.put(allocator, "chatId", schema.schemaProperty("string", "The ID of the chat containing the message")) catch return null;
     delete_chat_msg_props.put(allocator, "messageId", schema.schemaProperty("string", "The ID of the message to delete")) catch return null;
 
     // --- delete-channel-message schema ---
-    var delete_chan_msg_props = @as(std.json.ObjectMap, .empty);
+    var delete_chan_msg_props = @as(ObjectMap, .empty);
     delete_chan_msg_props.put(allocator, "teamId", schema.schemaProperty("string", "The ID of the team")) catch return null;
     delete_chan_msg_props.put(allocator, "channelId", schema.schemaProperty("string", "The ID of the channel")) catch return null;
     delete_chan_msg_props.put(allocator, "messageId", schema.schemaProperty("string", "The ID of the message to delete")) catch return null;
 
     // --- delete-channel-reply schema ---
-    var delete_chan_reply_props = @as(std.json.ObjectMap, .empty);
+    var delete_chan_reply_props = @as(ObjectMap, .empty);
     delete_chan_reply_props.put(allocator, "teamId", schema.schemaProperty("string", "The ID of the team")) catch return null;
     delete_chan_reply_props.put(allocator, "channelId", schema.schemaProperty("string", "The ID of the channel")) catch return null;
     delete_chan_reply_props.put(allocator, "messageId", schema.schemaProperty("string", "The ID of the parent message")) catch return null;
     delete_chan_reply_props.put(allocator, "replyId", schema.schemaProperty("string", "The ID of the reply to delete")) catch return null;
 
     // --- update-calendar-event schema ---
-    var cal_update_props = @as(std.json.ObjectMap, .empty);
+    var cal_update_props = @as(ObjectMap, .empty);
     cal_update_props.put(allocator, "eventId", schema.schemaProperty("string", "The ID of the event to update (from list-calendar-events)")) catch return null;
     cal_update_props.put(allocator, "subject", schema.schemaProperty("string", "New event title/subject")) catch return null;
     cal_update_props.put(allocator, "startDateTime", schema.schemaProperty("string", "New start time in ISO 8601 format")) catch return null;
@@ -139,11 +141,11 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
     cal_update_props.put(allocator, "location", schema.schemaProperty("string", "New location name")) catch return null;
 
     // --- delete-calendar-event schema ---
-    var cal_delete_props = @as(std.json.ObjectMap, .empty);
+    var cal_delete_props = @as(ObjectMap, .empty);
     cal_delete_props.put(allocator, "eventId", schema.schemaProperty("string", "The ID of the event to delete (from list-calendar-events)")) catch return null;
 
     // --- create-calendar-event schema ---
-    var cal_create_props = @as(std.json.ObjectMap, .empty);
+    var cal_create_props = @as(ObjectMap, .empty);
     cal_create_props.put(allocator, "subject", schema.schemaProperty("string", "Event title/subject")) catch return null;
     cal_create_props.put(allocator, "startDateTime", schema.schemaProperty("string", "Start time in ISO 8601 format (e.g. 2026-02-24T09:00:00)")) catch return null;
     cal_create_props.put(allocator, "endDateTime", schema.schemaProperty("string", "End time in ISO 8601 format (e.g. 2026-02-24T10:00:00)")) catch return null;
@@ -153,20 +155,20 @@ pub fn allDefinitions(allocator: std.mem.Allocator) ?[]const types.ToolDefinitio
     cal_create_props.put(allocator, "optionalAttendees", schema.schemaProperty("array", "Optional array of optional attendee email addresses")) catch return null;
 
     // --- get-calendar-event schema ---
-    var cal_get_props = @as(std.json.ObjectMap, .empty);
+    var cal_get_props = @as(ObjectMap, .empty);
     cal_get_props.put(allocator, "eventId", schema.schemaProperty("string", "The ID of the calendar event to fetch (from list-calendar-events)")) catch return null;
 
     // --- list-calendar-events schema ---
-    var cal_list_props = @as(std.json.ObjectMap, .empty);
+    var cal_list_props = @as(ObjectMap, .empty);
     cal_list_props.put(allocator, "startDateTime", schema.schemaProperty("string", "Start of date range in local time, ISO 8601 format (e.g. 2026-02-23T00:00:00)")) catch return null;
     cal_list_props.put(allocator, "endDateTime", schema.schemaProperty("string", "End of date range in local time, ISO 8601 format (e.g. 2026-02-24T00:00:00)")) catch return null;
 
     // --- read-email schema ---
-    var read_email_props = @as(std.json.ObjectMap, .empty);
+    var read_email_props = @as(ObjectMap, .empty);
     read_email_props.put(allocator, "emailId", schema.schemaProperty("string", "The ID of the email to read (from list-emails results)")) catch return null;
 
     // --- send-chat-message schema ---
-    var send_chat_props = @as(std.json.ObjectMap, .empty);
+    var send_chat_props = @as(ObjectMap, .empty);
     send_chat_props.put(allocator, "chatId", schema.schemaProperty("string", "The ID of the chat to send the message to")) catch return null;
     send_chat_props.put(allocator, "message", schema.schemaProperty("string", "The message text to send")) catch return null;
 

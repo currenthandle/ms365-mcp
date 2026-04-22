@@ -2,27 +2,31 @@
 
 const std = @import("std");
 
+const Value = std.json.Value;
+const ObjectMap = std.json.ObjectMap;
+const Array = std.json.Array;
+
 const page = std.heap.page_allocator;
 
-pub fn schemaProperty(prop_type: []const u8, description: []const u8) std.json.Value {
-    var obj: std.json.ObjectMap = .empty;
+pub fn schemaProperty(prop_type: []const u8, description: []const u8) Value {
+    var obj: ObjectMap = .empty;
     obj.put(page, "type", .{ .string = prop_type }) catch {};
     obj.put(page, "description", .{ .string = description }) catch {};
     return .{ .object = obj };
 }
 
-pub fn emptySchema() std.json.Value {
-    var obj: std.json.ObjectMap = .empty;
+pub fn emptySchema() Value {
+    var obj: ObjectMap = .empty;
     obj.put(page, "type", .{ .string = "object" }) catch {};
     return .{ .object = obj };
 }
 
-pub fn buildSchema(properties: std.json.ObjectMap, required: []const []const u8) std.json.Value {
-    var obj: std.json.ObjectMap = .empty;
+pub fn buildSchema(properties: ObjectMap, required: []const []const u8) Value {
+    var obj: ObjectMap = .empty;
     obj.put(page, "type", .{ .string = "object" }) catch {};
     obj.put(page, "properties", .{ .object = properties }) catch {};
 
-    var req_array = std.json.Array.init(page);
+    var req_array = Array.init(page);
     for (required) |name| {
         req_array.append(.{ .string = name }) catch {};
     }
@@ -48,7 +52,7 @@ test "emptySchema creates object type" {
 }
 
 test "buildSchema includes properties and required" {
-    var props: std.json.ObjectMap = .empty;
+    var props: ObjectMap = .empty;
     props.put(page, "to", schemaProperty("string", "Recipient")) catch {};
     const s = buildSchema(props, &.{"to"});
     const obj = s.object;
@@ -60,7 +64,7 @@ test "buildSchema includes properties and required" {
 }
 
 test "buildSchema empty required array" {
-    const props: std.json.ObjectMap = .empty;
+    const props: ObjectMap = .empty;
     const s = buildSchema(props, &.{});
     const req = s.object.get("required").?.array;
     try testing.expectEqual(@as(usize, 0), req.items.len);

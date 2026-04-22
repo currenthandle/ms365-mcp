@@ -7,13 +7,16 @@ const json_rpc = @import("../json_rpc.zig");
 const ToolContext = @import("context.zig").ToolContext;
 
 const Allocator = std.mem.Allocator;
+const Value = std.json.Value;
+const ObjectMap = std.json.ObjectMap;
+const Array = std.json.Array;
 
 /// Convert a JSON array of email strings into a slice of Recipient structs.
 /// Returns null if the key is missing or isn't an array.
 /// pub because drafts.zig also needs this.
 pub fn parseRecipients(
     allocator: Allocator,
-    args: std.json.ObjectMap,
+    args: ObjectMap,
     key: []const u8,
 ) !?[]const types.SendMailRequest.Message.Recipient {
     const val = args.get(key) orelse return null;
@@ -135,9 +138,9 @@ pub fn handleDeleteEmail(ctx: ToolContext) void {
 
 const testing = std.testing;
 
-fn buildTestArgs(key: []const u8, items: []const std.json.Value) std.json.ObjectMap {
-    var args: std.json.ObjectMap = .empty;
-    var arr = std.json.Array.init(testing.allocator);
+fn buildTestArgs(key: []const u8, items: []const Value) ObjectMap {
+    var args: ObjectMap = .empty;
+    var arr = Array.init(testing.allocator);
     for (items) |item| {
         arr.append(item) catch {};
     }
@@ -156,13 +159,13 @@ test "parseRecipients valid array" {
 }
 
 test "parseRecipients missing key returns null" {
-    var args: std.json.ObjectMap = .empty;
+    var args: ObjectMap = .empty;
     defer args.deinit(testing.allocator);
     try testing.expect((try parseRecipients(testing.allocator, args, "to")) == null);
 }
 
 test "parseRecipients non-array returns null" {
-    var args: std.json.ObjectMap = .empty;
+    var args: ObjectMap = .empty;
     defer args.deinit(testing.allocator);
     args.put(testing.allocator, "to", .{ .string = "a@b.com" }) catch {};
     try testing.expect((try parseRecipients(testing.allocator, args, "to")) == null);

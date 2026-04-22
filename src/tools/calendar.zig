@@ -9,11 +9,13 @@ const tz = @import("../timezone.zig");
 const ToolContext = @import("context.zig").ToolContext;
 
 const Allocator = std.mem.Allocator;
+const Value = std.json.Value;
+const ObjectMap = std.json.ObjectMap;
 
 /// Convert a JSON array of email strings into a slice of Attendee structs.
 fn parseAttendees(
     allocator: Allocator,
-    args: std.json.ObjectMap,
+    args: ObjectMap,
     key: []const u8,
     attendee_type: []const u8,
 ) !?[]const types.CreateEventRequest.Attendee {
@@ -72,39 +74,39 @@ pub fn handleUpdateCalendarEvent(ctx: ToolContext) void {
     const event_id = ctx.getPathArg(args, "eventId", "Missing 'eventId' argument.") orelse return;
 
     // Build PATCH body with only provided fields.
-    var update_obj: std.json.ObjectMap = .empty;
+    var update_obj: ObjectMap = .empty;
     defer update_obj.deinit(ctx.allocator);
 
     if (json_rpc.getStringArg(args, "subject")) |s|
         update_obj.put(ctx.allocator, "subject", .{ .string = s }) catch return;
 
     if (json_rpc.getStringArg(args, "startDateTime")) |s| {
-        var obj: std.json.ObjectMap = .empty;
+        var obj: ObjectMap = .empty;
         obj.put(ctx.allocator, "dateTime", .{ .string = s }) catch return;
         obj.put(ctx.allocator, "timeZone", .{ .string = ctx.state.timezone }) catch return;
         update_obj.put(ctx.allocator, "start", .{ .object = obj }) catch return;
     }
     if (json_rpc.getStringArg(args, "endDateTime")) |e| {
-        var obj: std.json.ObjectMap = .empty;
+        var obj: ObjectMap = .empty;
         obj.put(ctx.allocator, "dateTime", .{ .string = e }) catch return;
         obj.put(ctx.allocator, "timeZone", .{ .string = ctx.state.timezone }) catch return;
         update_obj.put(ctx.allocator, "end", .{ .object = obj }) catch return;
     }
     if (json_rpc.getStringArg(args, "body")) |b| {
-        var obj: std.json.ObjectMap = .empty;
+        var obj: ObjectMap = .empty;
         obj.put(ctx.allocator, "contentType", .{ .string = "Text" }) catch return;
         obj.put(ctx.allocator, "content", .{ .string = b }) catch return;
         update_obj.put(ctx.allocator, "body", .{ .object = obj }) catch return;
     }
     if (json_rpc.getStringArg(args, "location")) |l| {
-        var obj: std.json.ObjectMap = .empty;
+        var obj: ObjectMap = .empty;
         obj.put(ctx.allocator, "displayName", .{ .string = l }) catch return;
         update_obj.put(ctx.allocator, "location", .{ .object = obj }) catch return;
     }
 
     var json_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
     defer json_buf.deinit();
-    std.json.Stringify.value(std.json.Value{ .object = update_obj }, .{}, &json_buf.writer) catch return;
+    std.json.Stringify.value(Value{ .object = update_obj }, .{}, &json_buf.writer) catch return;
 
     const path = std.fmt.allocPrint(ctx.allocator, "/me/events/{s}", .{event_id}) catch return;
     defer ctx.allocator.free(path);

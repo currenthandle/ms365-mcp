@@ -5,6 +5,9 @@ const json_rpc = @import("../json_rpc.zig");
 const state_mod = @import("../state.zig");
 const types = @import("../types.zig");
 
+const Value = std.json.Value;
+const ObjectMap = std.json.ObjectMap;
+
 /// Bundles everything a tool handler needs into one struct.
 /// Constructed once per tools/call in main.zig's message loop.
 pub const ToolContext = struct {
@@ -15,7 +18,7 @@ pub const ToolContext = struct {
     client_id: []const u8,
     tenant_id: []const u8,
     /// Borrows data from main.zig's message loop — valid for one handler call only.
-    parsed: std.json.Value,
+    parsed: Value,
 
     // --- Response helpers ---
 
@@ -47,7 +50,7 @@ pub const ToolContext = struct {
     // --- Argument helpers ---
 
     /// Get the tool arguments object, or send an error and return null.
-    pub fn getArgs(self: ToolContext, err_msg: []const u8) ?std.json.ObjectMap {
+    pub fn getArgs(self: ToolContext, err_msg: []const u8) ?ObjectMap {
         return json_rpc.getToolArgs(self.parsed) orelse {
             self.sendResult(err_msg);
             return null;
@@ -55,7 +58,7 @@ pub const ToolContext = struct {
     }
 
     /// Get a string argument by key, or send an error and return null.
-    pub fn getStringArg(self: ToolContext, args: std.json.ObjectMap, key: []const u8, err_msg: []const u8) ?[]const u8 {
+    pub fn getStringArg(self: ToolContext, args: ObjectMap, key: []const u8, err_msg: []const u8) ?[]const u8 {
         return json_rpc.getStringArg(args, key) orelse {
             self.sendResult(err_msg);
             return null;
@@ -63,7 +66,7 @@ pub const ToolContext = struct {
     }
 
     /// Get a path-safe argument (rejects /, ?, &, #), or send an error and return null.
-    pub fn getPathArg(self: ToolContext, args: std.json.ObjectMap, key: []const u8, err_msg: []const u8) ?[]const u8 {
+    pub fn getPathArg(self: ToolContext, args: ObjectMap, key: []const u8, err_msg: []const u8) ?[]const u8 {
         return json_rpc.getPathArg(args, key) orelse {
             self.sendResult(err_msg);
             return null;
@@ -71,7 +74,7 @@ pub const ToolContext = struct {
     }
 
     /// Get the validated "top" pagination parameter (numeric 1-50, default "50").
-    pub fn getTopArg(self: ToolContext, args: std.json.ObjectMap) []const u8 {
+    pub fn getTopArg(self: ToolContext, args: ObjectMap) []const u8 {
         _ = self;
         return json_rpc.getTopArg(args);
     }
