@@ -84,6 +84,97 @@ pub fn getWithPrefer(allocator: Allocator, io: Io, access_token: []const u8, pat
     return response_buf.toOwnedSlice();
 }
 
+/// Make an authenticated PUT request to the Graph API with a raw body.
+///
+/// Unlike post/patch, this lets the caller specify Content-Type — required for
+/// SharePoint / OneDrive file upload where the body is arbitrary bytes.
+/// `path` is the API path after /v1.0.
+/// `body` is the raw bytes to upload.
+/// `content_type` is the MIME type (e.g. "application/pdf", "text/markdown").
+///
+/// Returns the response body as an allocated slice — caller must free it.
+pub fn put(
+    allocator: Allocator,
+    io: Io,
+    access_token: []const u8,
+    path: []const u8,
+    body: []const u8,
+    content_type: []const u8,
+) ![]u8 {
+    const url = try std.fmt.allocPrint(allocator, "{s}{s}", .{ base_url, path });
+    defer allocator.free(url);
+
+    std.debug.print("ms-mcp: PUT {s} ({d} bytes, {s})\n", .{ url, body.len, content_type });
+
+    const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{access_token});
+    defer allocator.free(auth_header);
+
+    var client: std.http.Client = .{ .allocator = allocator, .io = io };
+    defer client.deinit();
+
+    var response_buf: std.Io.Writer.Allocating = .init(allocator);
+    defer response_buf.deinit();
+
+    const headers = &[_]std.http.Header{
+        .{ .name = "Authorization", .value = auth_header },
+        .{ .name = "Content-Type", .value = content_type },
+    };
+
+    _ = try client.fetch(.{
+        .location = .{ .url = url },
+        .method = .PUT,
+        .payload = body,
+        .extra_headers = headers,
+        .response_writer = &response_buf.writer,
+    });
+
+    return response_buf.toOwnedSlice();
+}
+
+/// PUT one chunk of a large-file upload to a pre-authed upload session URL.
+///
+/// The `upload_url` is the absolute URL returned by createUploadSession
+/// (NOT a Graph path) — it already embeds an auth token, so we must NOT
+/// send a Bearer header (that would double-auth and fail).
+///
+/// `chunk` is the bytes for this chunk.
+/// `content_range` is the HTTP Content-Range header value, e.g.
+/// "bytes 0-10485759/52428800" (start-end inclusive, total file size).
+///
+/// Returns the response body as an allocated slice — caller must free it.
+/// A 202 response means "continue with next chunk"; a 200/201 means "done"
+/// and contains the DriveItem JSON.
+pub fn putChunk(
+    allocator: Allocator,
+    io: Io,
+    upload_url: []const u8,
+    chunk: []const u8,
+    content_range: []const u8,
+) ![]u8 {
+    std.debug.print("ms-mcp: PUT (upload session chunk) {s} bytes, range={s}\n", .{ content_range, content_range });
+
+    var client: std.http.Client = .{ .allocator = allocator, .io = io };
+    defer client.deinit();
+
+    var response_buf: std.Io.Writer.Allocating = .init(allocator);
+    defer response_buf.deinit();
+
+    // No Authorization header — upload_url is pre-signed.
+    const headers = &[_]std.http.Header{
+        .{ .name = "Content-Range", .value = content_range },
+    };
+
+    _ = try client.fetch(.{
+        .location = .{ .url = upload_url },
+        .method = .PUT,
+        .payload = chunk,
+        .extra_headers = headers,
+        .response_writer = &response_buf.writer,
+    });
+
+    return response_buf.toOwnedSlice();
+}
+
 /// Make an authenticated PATCH request to the Graph API with a JSON body.
 ///
 /// `path` is the API path after /v1.0, e.g. "/me/events/{id}".
