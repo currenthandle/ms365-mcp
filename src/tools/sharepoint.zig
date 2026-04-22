@@ -308,6 +308,149 @@ fn uploadChunked(
     ctx.sendResult(last_response orelse "Upload completed, but no response body was returned.");
 }
 
+// --- Folder / delete / download ---
+
+/// Create a folder at the given path inside a drive.
+/// The path is the full path of the new folder relative to drive root;
+/// the parent must already exist.
+pub fn handleCreateFolder(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide siteId, driveId, and path.") orelse return;
+    const site_id = ctx.getPathArg(args, "siteId", "Missing 'siteId' argument.") orelse return;
+    const drive_id = ctx.getPathArg(args, "driveId", "Missing 'driveId' argument.") orelse return;
+    const sp_path = ctx.getStringArg(args, "path", "Missing 'path' argument (new folder path).") orelse return;
+
+    if (!isPathSafe(sp_path)) {
+        ctx.sendResult("Invalid path — must not start with '/' or contain '..'.");
+        return;
+    }
+
+    // Split path into parent + leaf. Parent may be empty (folder at root).
+    const last_slash = std.mem.lastIndexOfScalar(u8, sp_path, '/');
+    const parent_path: []const u8 = if (last_slash) |i| sp_path[0..i] else "";
+    const folder_name: []const u8 = if (last_slash) |i| sp_path[i + 1 ..] else sp_path;
+
+    if (folder_name.len == 0) {
+        ctx.sendResult("Invalid path — folder name is empty.");
+        return;
+    }
+
+    const endpoint = if (parent_path.len == 0)
+        std.fmt.allocPrint(ctx.allocator, "/sites/{s}/drives/{s}/root/children", .{ site_id, drive_id }) catch return
+    else blk: {
+        const escaped = escapePath(ctx.allocator, parent_path) catch return;
+        defer ctx.allocator.free(escaped);
+        break :blk std.fmt.allocPrint(ctx.allocator, "/sites/{s}/drives/{s}/root:/{s}:/children", .{ site_id, drive_id, escaped }) catch return;
+    };
+    defer ctx.allocator.free(endpoint);
+
+    // Build JSON body: {"name":"...", "folder":{}, "@microsoft.graph.conflictBehavior":"rename"}
+    var body: ObjectMap = .empty;
+    defer body.deinit(ctx.allocator);
+    body.put(ctx.allocator, "name", .{ .string = folder_name }) catch return;
+    const folder_obj: ObjectMap = .empty;
+    body.put(ctx.allocator, "folder", .{ .object = folder_obj }) catch return;
+    body.put(ctx.allocator, "@microsoft.graph.conflictBehavior", .{ .string = "rename" }) catch return;
+
+    var json_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
+    defer json_buf.deinit();
+    std.json.Stringify.value(Value{ .object = body }, .{}, &json_buf.writer) catch return;
+
+    const response = graph.post(ctx.allocator, ctx.io, token, endpoint, json_buf.written()) catch {
+        ctx.sendResult("Failed to create SharePoint folder.");
+        return;
+    };
+    defer ctx.allocator.free(response);
+
+    ctx.sendResult(response);
+}
+
+/// Delete an item (file or folder) by path OR by itemId.
+/// Exactly one of the two must be provided.
+pub fn handleDeleteItem(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide siteId, driveId, and either path or itemId.") orelse return;
+    const site_id = ctx.getPathArg(args, "siteId", "Missing 'siteId' argument.") orelse return;
+    const drive_id = ctx.getPathArg(args, "driveId", "Missing 'driveId' argument.") orelse return;
+
+    const sp_path = json_rpc.getStringArg(args, "path");
+    const item_id = json_rpc.getStringArg(args, "itemId");
+
+    if (sp_path == null and item_id == null) {
+        ctx.sendResult("Must provide either 'path' or 'itemId'.");
+        return;
+    }
+    if (sp_path != null and item_id != null) {
+        ctx.sendResult("Provide either 'path' OR 'itemId', not both.");
+        return;
+    }
+
+    const endpoint = if (item_id) |id|
+        std.fmt.allocPrint(ctx.allocator, "/sites/{s}/drives/{s}/items/{s}", .{ site_id, drive_id, id }) catch return
+    else blk: {
+        const p = sp_path.?;
+        if (!isPathSafe(p)) {
+            ctx.sendResult("Invalid path — must not start with '/' or contain '..'.");
+            return;
+        }
+        const escaped = escapePath(ctx.allocator, p) catch return;
+        defer ctx.allocator.free(escaped);
+        break :blk std.fmt.allocPrint(ctx.allocator, "/sites/{s}/drives/{s}/root:/{s}", .{ site_id, drive_id, escaped }) catch return;
+    };
+    defer ctx.allocator.free(endpoint);
+
+    graph.delete(ctx.allocator, ctx.io, token, endpoint) catch {
+        ctx.sendResult("Failed to delete SharePoint item.");
+        return;
+    };
+
+    ctx.sendResult("SharePoint item deleted.");
+}
+
+/// Download a file's contents by path OR itemId.
+/// The response text is the raw file body (the client can save it or parse it).
+/// For binary files, the bytes are returned as-is inside the MCP text result.
+pub fn handleDownloadFile(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide siteId, driveId, and either path or itemId.") orelse return;
+    const site_id = ctx.getPathArg(args, "siteId", "Missing 'siteId' argument.") orelse return;
+    const drive_id = ctx.getPathArg(args, "driveId", "Missing 'driveId' argument.") orelse return;
+
+    const sp_path = json_rpc.getStringArg(args, "path");
+    const item_id = json_rpc.getStringArg(args, "itemId");
+
+    if (sp_path == null and item_id == null) {
+        ctx.sendResult("Must provide either 'path' or 'itemId'.");
+        return;
+    }
+    if (sp_path != null and item_id != null) {
+        ctx.sendResult("Provide either 'path' OR 'itemId', not both.");
+        return;
+    }
+
+    const endpoint = if (item_id) |id|
+        std.fmt.allocPrint(ctx.allocator, "/sites/{s}/drives/{s}/items/{s}/content", .{ site_id, drive_id, id }) catch return
+    else blk: {
+        const p = sp_path.?;
+        if (!isPathSafe(p)) {
+            ctx.sendResult("Invalid path — must not start with '/' or contain '..'.");
+            return;
+        }
+        const escaped = escapePath(ctx.allocator, p) catch return;
+        defer ctx.allocator.free(escaped);
+        break :blk std.fmt.allocPrint(ctx.allocator, "/sites/{s}/drives/{s}/root:/{s}:/content", .{ site_id, drive_id, escaped }) catch return;
+    };
+    defer ctx.allocator.free(endpoint);
+
+    const response = graph.get(ctx.allocator, ctx.io, token, endpoint) catch {
+        ctx.sendResult("Failed to download SharePoint file.");
+        return;
+    };
+    defer ctx.allocator.free(response);
+
+    ctx.sendResult(response);
+}
+
 /// Extract a top-level string field from a JSON response body.
 /// Returns a newly-allocated copy (or null on any parse / shape failure) —
 /// caller owns the result.

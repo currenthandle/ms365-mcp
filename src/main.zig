@@ -98,6 +98,9 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "list-sharepoint-items", sharepoint_tools.handleListItems },
     .{ "upload-sharepoint-file", sharepoint_tools.handleUploadFile },
     .{ "upload-sharepoint-content", sharepoint_tools.handleUploadContent },
+    .{ "create-sharepoint-folder", sharepoint_tools.handleCreateFolder },
+    .{ "delete-sharepoint-item", sharepoint_tools.handleDeleteItem },
+    .{ "download-sharepoint-file", sharepoint_tools.handleDownloadFile },
     // --- Utility ---
     .{ "search-users", user_tools.handleSearchUsers },
     .{ "get-profile", user_tools.handleGetProfile },

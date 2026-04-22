@@ -254,6 +254,26 @@ const sp_upload_content_props = [_]PropSpec{
     .{ .name = "contentType", .type = "string", .description = "Optional MIME type override. Auto-detected from the path's extension if omitted." },
 };
 
+const sp_create_folder_props = [_]PropSpec{
+    sp_site_id_prop,
+    sp_drive_id_prop,
+    .{ .name = "path", .type = "string", .description = "Path of the new folder relative to drive root (e.g. '2026/Q1'). Parent folders must already exist." },
+};
+
+const sp_delete_item_props = [_]PropSpec{
+    sp_site_id_prop,
+    sp_drive_id_prop,
+    .{ .name = "path", .type = "string", .description = "Path of the item to delete (e.g. '2026/Q1/report.pdf'). Provide either this OR itemId." },
+    .{ .name = "itemId", .type = "string", .description = "Drive item ID (from list-sharepoint-items). Provide either this OR path." },
+};
+
+const sp_download_file_props = [_]PropSpec{
+    sp_site_id_prop,
+    sp_drive_id_prop,
+    .{ .name = "path", .type = "string", .description = "Path of the file to download (e.g. '2026/Q1/report.pdf'). Provide either this OR itemId." },
+    .{ .name = "itemId", .type = "string", .description = "Drive item ID (from list-sharepoint-items). Provide either this OR path." },
+};
+
 // --- Full list of tools, in the order they appear in tools/list output. ---
 // Grouped by category. Do not reorder without checking client-side expectations.
 
@@ -462,6 +482,24 @@ const all_tools = [_]ToolSpec{
         .description = "Upload a raw string (markdown, text, JSON, etc.) to a SharePoint drive at the given path. Auto-chunks content larger than 4 MB. Overwrites any existing file at the destination.",
         .props = &sp_upload_content_props,
         .required = &.{ "siteId", "driveId", "path", "content" },
+    },
+    .{
+        .name = "create-sharepoint-folder",
+        .description = "Create a new folder at the given path in a SharePoint drive. Parent folders must already exist. If a folder with the same name exists, the new folder is renamed (e.g. 'Q1 1').",
+        .props = &sp_create_folder_props,
+        .required = &.{ "siteId", "driveId", "path" },
+    },
+    .{
+        .name = "delete-sharepoint-item",
+        .description = "Delete a file or folder from a SharePoint drive. Identify the item by either 'path' (human-readable) or 'itemId' (from list-sharepoint-items). Provide exactly one.",
+        .props = &sp_delete_item_props,
+        .required = &.{ "siteId", "driveId" },
+    },
+    .{
+        .name = "download-sharepoint-file",
+        .description = "Download a file's contents from a SharePoint drive. Identify the file by either 'path' or 'itemId'. Provide exactly one. Returns the raw file bytes.",
+        .props = &sp_download_file_props,
+        .required = &.{ "siteId", "driveId" },
     },
     // --- Utility ---
     .{
