@@ -118,8 +118,9 @@ pub fn findChatByMember(allocator: Allocator, summary: []const u8, member_name: 
             if (id.len == 0) continue;
 
             if (std.mem.startsWith(u8, line, "[oneOnOne]")) {
-                // Preferred: 1:1 chat.
-                return allocator.dupe(u8, id) catch return null;
+                // Preferred: 1:1 chat. Drop any earlier fallback we held.
+                if (fallback_id) |f| allocator.free(f);
+                return allocator.dupe(u8, id) catch null;
             } else if (fallback_id == null) {
                 // Save first non-oneOnOne match as fallback.
                 fallback_id = allocator.dupe(u8, id) catch null;
