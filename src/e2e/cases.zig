@@ -1021,3 +1021,145 @@ pub fn testSearchUsers(client: *McpClient) !void {
         fail("search-users", "response doesn't contain value array");
     }
 }
+
+/// Test: SharePoint full lifecycle — search site, list drive, create folder,
+/// upload content, list, download + verify, delete file, delete folder.
+///
+/// Requires `E2E_SHAREPOINT_SITE_NAME` env var (a keyword that matches at
+/// least one site the logged-in user can access). Skipped if unset.
+pub fn testSharePointLifecycle(client: *McpClient) !void {
+    const site_query = if (std.c.getenv("E2E_SHAREPOINT_SITE_NAME")) |ptr| std.mem.span(ptr) else {
+        std.debug.print("  ⓘ Skipping sharepoint lifecycle (E2E_SHAREPOINT_SITE_NAME not set)\n", .{});
+        return;
+    };
+
+    // --- Find a site ---
+    var search_buf: [512]u8 = undefined;
+    const search_args = std.fmt.bufPrint(&search_buf, "{{\"query\":\"{s}\"}}", .{site_query}) catch return;
+    const search = try client.callTool("search-sharepoint-sites", search_args);
+    defer search.deinit();
+    const search_text = McpClient.getResultText(search) orelse {
+        fail("search-sharepoint-sites", "no text");
+        return;
+    };
+    const site_id = helpers.extractFirstValueField(client.allocator, search_text, "id") orelse {
+        std.debug.print("  ⓘ No SharePoint site matched query '{s}' — skipping rest of lifecycle\n", .{site_query});
+        return;
+    };
+    defer client.allocator.free(site_id);
+    pass("search-sharepoint-sites");
+
+    // --- List drives ---
+    var drives_buf: [512]u8 = undefined;
+    const drives_args = std.fmt.bufPrint(&drives_buf, "{{\"siteId\":\"{s}\"}}", .{site_id}) catch return;
+    const drives = try client.callTool("list-sharepoint-drives", drives_args);
+    defer drives.deinit();
+    const drives_text = McpClient.getResultText(drives) orelse {
+        fail("list-sharepoint-drives", "no text");
+        return;
+    };
+    const drive_id = helpers.extractFirstValueField(client.allocator, drives_text, "id") orelse {
+        fail("list-sharepoint-drives", "no drive in site");
+        return;
+    };
+    defer client.allocator.free(drive_id);
+    pass("list-sharepoint-drives");
+
+    // --- Create a test folder at the drive root ---
+    const folder_path = "e2e-test-folder";
+    var folder_buf: [1024]u8 = undefined;
+    const folder_args = std.fmt.bufPrint(&folder_buf, "{{\"siteId\":\"{s}\",\"driveId\":\"{s}\",\"path\":\"{s}\"}}", .{ site_id, drive_id, folder_path }) catch return;
+    const folder = try client.callTool("create-sharepoint-folder", folder_args);
+    defer folder.deinit();
+    const folder_text = McpClient.getResultText(folder) orelse {
+        fail("create-sharepoint-folder", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, folder_text, "\"id\"") != null) {
+        pass("create-sharepoint-folder");
+    } else {
+        fail("create-sharepoint-folder", folder_text);
+        return;
+    }
+
+    // --- Upload a small content file ---
+    const test_content = "Hello from the ms-mcp e2e suite. If you see this in SharePoint, something failed to clean up.";
+    var upload_buf: [2048]u8 = undefined;
+    const upload_args = std.fmt.bufPrint(
+        &upload_buf,
+        "{{\"siteId\":\"{s}\",\"driveId\":\"{s}\",\"path\":\"{s}/hello.md\",\"content\":\"{s}\"}}",
+        .{ site_id, drive_id, folder_path, test_content },
+    ) catch return;
+    const upload = try client.callTool("upload-sharepoint-content", upload_args);
+    defer upload.deinit();
+    const upload_text = McpClient.getResultText(upload) orelse {
+        fail("upload-sharepoint-content", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, upload_text, "\"id\"") != null) {
+        pass("upload-sharepoint-content");
+    } else {
+        fail("upload-sharepoint-content", upload_text);
+        return;
+    }
+
+    // --- List items in the folder to confirm upload appeared ---
+    var list_buf: [1024]u8 = undefined;
+    const list_args = std.fmt.bufPrint(&list_buf, "{{\"siteId\":\"{s}\",\"driveId\":\"{s}\",\"folderPath\":\"{s}\"}}", .{ site_id, drive_id, folder_path }) catch return;
+    const list = try client.callTool("list-sharepoint-items", list_args);
+    defer list.deinit();
+    const list_text = McpClient.getResultText(list) orelse {
+        fail("list-sharepoint-items", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, list_text, "hello.md") != null) {
+        pass("list-sharepoint-items (found uploaded file)");
+    } else {
+        fail("list-sharepoint-items", "hello.md not in response");
+    }
+
+    // --- Download and verify content ---
+    var dl_buf: [1024]u8 = undefined;
+    const dl_args = std.fmt.bufPrint(&dl_buf, "{{\"siteId\":\"{s}\",\"driveId\":\"{s}\",\"path\":\"{s}/hello.md\"}}", .{ site_id, drive_id, folder_path }) catch return;
+    const dl = try client.callTool("download-sharepoint-file", dl_args);
+    defer dl.deinit();
+    const dl_text = McpClient.getResultText(dl) orelse {
+        fail("download-sharepoint-file", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, dl_text, "ms-mcp e2e suite") != null) {
+        pass("download-sharepoint-file (verified content)");
+    } else {
+        fail("download-sharepoint-file", "content mismatch");
+    }
+
+    // --- Delete the file ---
+    var del_file_buf: [1024]u8 = undefined;
+    const del_file_args = std.fmt.bufPrint(&del_file_buf, "{{\"siteId\":\"{s}\",\"driveId\":\"{s}\",\"path\":\"{s}/hello.md\"}}", .{ site_id, drive_id, folder_path }) catch return;
+    const del_file = try client.callTool("delete-sharepoint-item", del_file_args);
+    defer del_file.deinit();
+    const del_file_text = McpClient.getResultText(del_file) orelse {
+        fail("delete-sharepoint-item (file)", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, del_file_text, "deleted") != null) {
+        pass("delete-sharepoint-item (file)");
+    } else {
+        fail("delete-sharepoint-item (file)", del_file_text);
+    }
+
+    // --- Delete the folder ---
+    var del_folder_buf: [1024]u8 = undefined;
+    const del_folder_args = std.fmt.bufPrint(&del_folder_buf, "{{\"siteId\":\"{s}\",\"driveId\":\"{s}\",\"path\":\"{s}\"}}", .{ site_id, drive_id, folder_path }) catch return;
+    const del_folder = try client.callTool("delete-sharepoint-item", del_folder_args);
+    defer del_folder.deinit();
+    const del_folder_text = McpClient.getResultText(del_folder) orelse {
+        fail("delete-sharepoint-item (folder)", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, del_folder_text, "deleted") != null) {
+        pass("delete-sharepoint-item (folder cleanup)");
+    } else {
+        fail("delete-sharepoint-item (folder cleanup)", del_folder_text);
+    }
+}

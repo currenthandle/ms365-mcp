@@ -103,6 +103,9 @@ pub fn main() !void {
     try cases.testChannelLifecycle(&client);
     try cases.testReplyToChannelMessage(&client);
 
+    std.debug.print("\n\x1b[1mLifecycle — SharePoint:\x1b[0m\n", .{});
+    try cases.testSharePointLifecycle(&client);
+
     // --- Summary ---
     const total = runner.tests_passed + runner.tests_failed;
     std.debug.print("\n\x1b[1m── Results: {d}/{d} passed ──\x1b[0m\n\n", .{ runner.tests_passed, total });

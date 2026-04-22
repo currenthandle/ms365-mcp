@@ -193,3 +193,30 @@ pub fn extractFirstMessageId(allocator: Allocator, json_text: []const u8) ?[]u8 
     }
     return null;
 }
+
+/// Extract a named string field from the first element of a Graph `value`
+/// array. Handy for "give me the id of the first search hit" patterns where
+/// the full response is {"value": [{..., "id": "..."}, ...]}.
+pub fn extractFirstValueField(allocator: Allocator, json_text: []const u8, key: []const u8) ?[]u8 {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_text, .{}) catch return null;
+    defer parsed.deinit();
+    const obj = switch (parsed.value) {
+        .object => |o| o,
+        else => return null,
+    };
+    const values = switch (obj.get("value") orelse return null) {
+        .array => |a| a,
+        else => return null,
+    };
+    if (values.items.len == 0) return null;
+    const first = switch (values.items[0]) {
+        .object => |o| o,
+        else => return null,
+    };
+    const val = first.get(key) orelse return null;
+    const s = switch (val) {
+        .string => |str| str,
+        else => return null,
+    };
+    return allocator.dupe(u8, s) catch null;
+}
