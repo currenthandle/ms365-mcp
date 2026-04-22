@@ -139,8 +139,17 @@ pub fn main() !void {
     var threaded_io = std.Io.Threaded.init(allocator, .{});
     const io = threaded_io.io();
 
-    var read_buf: [4096]u8 = undefined;
-    var stdin = std.Io.File.stdin().reader(io, &read_buf);
+    // 32 MiB stdin read buffer, heap-allocated (too large for the 8 MiB
+    // default stack on macOS). MCP tools/call requests for file uploads via
+    // upload-sharepoint-content can carry multi-megabyte payloads in the
+    // arguments; a smaller buffer would cause takeDelimiter() to fail on any
+    // request line larger than the buffer.
+    const read_buf = allocator.alloc(u8, 32 * 1024 * 1024) catch |err| {
+        std.debug.print("ms-mcp: failed to allocate read buffer: {}\n", .{err});
+        return;
+    };
+    defer allocator.free(read_buf);
+    var stdin = std.Io.File.stdin().reader(io, read_buf);
 
     // Stdout writer — where we send JSON-RPC responses back to the client.
     // 64 KiB buffer: the tools/list response with all 26 tool schemas is large.

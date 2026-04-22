@@ -72,12 +72,15 @@ pub const McpClient = struct {
 
     /// Call a tool and return the text content from the response.
     /// Caller owns the returned Parsed value.
+    ///
+    /// The params JSON is heap-allocated so we can handle arguments larger
+    /// than any fixed stack buffer (e.g. multi-megabyte upload payloads).
     pub fn callTool(self: *McpClient, name: []const u8, args_json: ?[]const u8) !std.json.Parsed(std.json.Value) {
-        var params_buf: [4096]u8 = undefined;
         const params = if (args_json) |a|
-            try std.fmt.bufPrint(&params_buf, "{{\"name\":\"{s}\",\"arguments\":{s}}}", .{ name, a })
+            try std.fmt.allocPrint(self.allocator, "{{\"name\":\"{s}\",\"arguments\":{s}}}", .{ name, a })
         else
-            try std.fmt.bufPrint(&params_buf, "{{\"name\":\"{s}\"}}", .{name});
+            try std.fmt.allocPrint(self.allocator, "{{\"name\":\"{s}\"}}", .{name});
+        defer self.allocator.free(params);
 
         return self.call("tools/call", params);
     }

@@ -24,6 +24,21 @@ const env = @import("e2e/env.zig");
 
 const McpClient = client_mod.McpClient;
 
+/// Returns true if the given category should run.
+/// If E2E_ONLY is set in the environment, only categories matching its value
+/// run; otherwise every category runs. Comma-separated values allow multiple
+/// categories (e.g. E2E_ONLY=sharepoint,channels).
+fn shouldRun(category: []const u8) bool {
+    const only_raw = std.c.getenv("E2E_ONLY") orelse return true;
+    const only = std.mem.span(only_raw);
+    if (only.len == 0) return true;
+    var it = std.mem.splitScalar(u8, only, ',');
+    while (it.next()) |token| {
+        if (std.mem.eql(u8, std.mem.trim(u8, token, " "), category)) return true;
+    }
+    return false;
+}
+
 pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
@@ -71,40 +86,58 @@ pub fn main() !void {
     }
 
     // --- Read-only tests (no cleanup needed) ---
-    std.debug.print("\n\x1b[1mRead-only:\x1b[0m\n", .{});
-    try cases.testGetProfile(&client);
-    try cases.testListEmails(&client);
-    try cases.testListChats(&client);
-    try cases.testListTeams(&client);
-    try cases.testSearchUsers(&client);
-    try cases.testGetMailboxSettings(&client);
-    try cases.testSyncTimezone(&client);
+    if (shouldRun("readonly")) {
+        std.debug.print("\n\x1b[1mRead-only:\x1b[0m\n", .{});
+        try cases.testGetProfile(&client);
+        try cases.testListEmails(&client);
+        try cases.testListChats(&client);
+        try cases.testListTeams(&client);
+        try cases.testSearchUsers(&client);
+        try cases.testGetMailboxSettings(&client);
+        try cases.testSyncTimezone(&client);
+    }
 
     // --- Lifecycle tests (create → verify → delete) ---
-    std.debug.print("\n\x1b[1mLifecycle — Drafts:\x1b[0m\n", .{});
-    try cases.testDraftLifecycle(&client);
-    try cases.testUpdateDraftLifecycle(&client);
-    try cases.testSendDraftLifecycle(&client);
-    try cases.testAttachmentLifecycle(&client);
-    try cases.testRemoveAttachmentLifecycle(&client);
+    if (shouldRun("drafts")) {
+        std.debug.print("\n\x1b[1mLifecycle — Drafts:\x1b[0m\n", .{});
+        try cases.testDraftLifecycle(&client);
+        try cases.testUpdateDraftLifecycle(&client);
+        try cases.testSendDraftLifecycle(&client);
+        try cases.testAttachmentLifecycle(&client);
+        try cases.testRemoveAttachmentLifecycle(&client);
+    }
 
-    std.debug.print("\n\x1b[1mLifecycle — Calendar:\x1b[0m\n", .{});
-    try cases.testCalendarLifecycle(&client);
-    try cases.testCalendarWithAttendees(&client);
-    try cases.testCalendarListAndUpdate(&client);
+    if (shouldRun("calendar")) {
+        std.debug.print("\n\x1b[1mLifecycle — Calendar:\x1b[0m\n", .{});
+        try cases.testCalendarLifecycle(&client);
+        try cases.testCalendarWithAttendees(&client);
+        try cases.testCalendarListAndUpdate(&client);
+    }
 
-    std.debug.print("\n\x1b[1mLifecycle — Email:\x1b[0m\n", .{});
-    try cases.testSendEmailLifecycle(&client);
+    if (shouldRun("email")) {
+        std.debug.print("\n\x1b[1mLifecycle — Email:\x1b[0m\n", .{});
+        try cases.testSendEmailLifecycle(&client);
+    }
 
-    std.debug.print("\n\x1b[1mLifecycle — Chat:\x1b[0m\n", .{});
-    try cases.testChatMessageLifecycle(&client);
+    if (shouldRun("chat")) {
+        std.debug.print("\n\x1b[1mLifecycle — Chat:\x1b[0m\n", .{});
+        try cases.testChatMessageLifecycle(&client);
+    }
 
-    std.debug.print("\n\x1b[1mLifecycle — Channels:\x1b[0m\n", .{});
-    try cases.testChannelLifecycle(&client);
-    try cases.testReplyToChannelMessage(&client);
+    if (shouldRun("channels")) {
+        std.debug.print("\n\x1b[1mLifecycle — Channels:\x1b[0m\n", .{});
+        try cases.testChannelLifecycle(&client);
+        try cases.testReplyToChannelMessage(&client);
+    }
 
-    std.debug.print("\n\x1b[1mLifecycle — SharePoint:\x1b[0m\n", .{});
-    try cases.testSharePointLifecycle(&client);
+    if (shouldRun("sharepoint")) {
+        std.debug.print("\n\x1b[1mLifecycle — SharePoint:\x1b[0m\n", .{});
+        try cases.testSharePointLifecycle(&client);
+        try cases.testSharePointFileUpload(&client);
+        try cases.testSharePointLargeUpload(&client);
+        try cases.testSharePointItemIdTargeting(&client);
+        try cases.testSharePointPathValidation(&client);
+    }
 
     // --- Summary ---
     const total = runner.tests_passed + runner.tests_failed;
