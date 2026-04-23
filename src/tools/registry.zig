@@ -70,6 +70,48 @@ const delete_email_props = [_]PropSpec{
     .{ .name = "emailId", .type = "string", .description = "The ID of the email to delete (from list-emails or read-email)" },
 };
 
+// --- Email action props (reply / forward / search / folders / mark / move / attachments) ---
+
+const reply_email_props = [_]PropSpec{
+    .{ .name = "emailId", .type = "string", .description = "The ID of the email to reply to (from list-emails or search-emails)" },
+    .{ .name = "comment", .type = "string", .description = "The reply text to send" },
+    .{ .name = "to", .type = "array", .description = "Optional additional recipients. Omit to reply only to the original sender." },
+};
+
+const reply_all_email_props = [_]PropSpec{
+    .{ .name = "emailId", .type = "string", .description = "The ID of the email to reply-all to" },
+    .{ .name = "comment", .type = "string", .description = "The reply text to send to everyone on the thread" },
+};
+
+const forward_email_props = [_]PropSpec{
+    .{ .name = "emailId", .type = "string", .description = "The ID of the email to forward" },
+    .{ .name = "comment", .type = "string", .description = "Optional text to include above the forwarded content (use empty string for none)" },
+    .{ .name = "to", .type = "array", .description = "Recipients to forward to — required, at least one" },
+};
+
+const search_emails_props = [_]PropSpec{
+    .{ .name = "query", .type = "string", .description = "Keyword or phrase to search for (matches subject, body, sender, and recipient fields)" },
+};
+
+const mark_read_email_props = [_]PropSpec{
+    .{ .name = "emailId", .type = "string", .description = "The ID of the email to mark" },
+    .{ .name = "isRead", .type = "boolean", .description = "Optional — true to mark read (default), false to mark unread" },
+};
+
+const move_email_props = [_]PropSpec{
+    .{ .name = "emailId", .type = "string", .description = "The ID of the email to move" },
+    .{ .name = "destinationId", .type = "string", .description = "Folder ID to move the email into (from list-mail-folders) — NOT the folder name" },
+};
+
+const list_email_attachments_props = [_]PropSpec{
+    .{ .name = "emailId", .type = "string", .description = "The ID of the email whose attachments you want to list" },
+};
+
+const read_email_attachment_props = [_]PropSpec{
+    .{ .name = "emailId", .type = "string", .description = "The ID of the email containing the attachment" },
+    .{ .name = "attachmentId", .type = "string", .description = "The ID of the attachment (from list-email-attachments)" },
+};
+
 const send_draft_props = [_]PropSpec{
     .{ .name = "draftId", .type = "string", .description = "The ID of the draft to send (from create-draft)" },
 };
@@ -325,6 +367,58 @@ const all_tools = [_]ToolSpec{
         .description = "Send an email via Microsoft 365 Outlook. Supports multiple recipients, CC, and BCC.",
         .props = &send_email_props,
         .required = &.{ "to", "subject", "body" },
+    },
+    .{
+        .name = "reply-email",
+        .description = "Reply to an email. By default, the reply goes only to the original sender; pass 'to' to add more recipients. Use 'comment' for the reply text.",
+        .props = &reply_email_props,
+        .required = &.{ "emailId", "comment" },
+    },
+    .{
+        .name = "reply-all-email",
+        .description = "Reply to everyone on the original email thread (original sender plus every to/cc recipient).",
+        .props = &reply_all_email_props,
+        .required = &.{ "emailId", "comment" },
+    },
+    .{
+        .name = "forward-email",
+        .description = "Forward an email to one or more new recipients. 'to' is required. Use 'comment' for text that appears above the forwarded content (pass an empty string to omit).",
+        .props = &forward_email_props,
+        .required = &.{ "emailId", "comment", "to" },
+    },
+    .{
+        .name = "search-emails",
+        .description = "Search the user's mailbox for emails matching a keyword. Matches subject, body, sender, and recipient fields. Returns up to 25 matches.",
+        .props = &search_emails_props,
+        .required = &.{"query"},
+    },
+    .{
+        .name = "list-mail-folders",
+        .description = "List the user's mail folders (Inbox, Sent, Drafts, Archive, plus any custom folders). Needed for move-email, which takes a folder ID, not a folder name.",
+    },
+    .{
+        .name = "mark-read-email",
+        .description = "Mark an email as read (default) or unread. Pass isRead=false to mark unread.",
+        .props = &mark_read_email_props,
+        .required = &.{"emailId"},
+    },
+    .{
+        .name = "move-email",
+        .description = "Move an email to a different folder. Use list-mail-folders first to get the destination folder ID — 'destinationId' is an ID, not a folder name.",
+        .props = &move_email_props,
+        .required = &.{ "emailId", "destinationId" },
+    },
+    .{
+        .name = "list-email-attachments",
+        .description = "List attachments on a received email. Returns each attachment's name, MIME type, size, and ID.",
+        .props = &list_email_attachments_props,
+        .required = &.{"emailId"},
+    },
+    .{
+        .name = "read-email-attachment",
+        .description = "Fetch an email attachment's metadata plus its base64-encoded bytes. Suitable for small text attachments. For binary files (PDFs, images), see download-email-attachment (coming in a later phase).",
+        .props = &read_email_attachment_props,
+        .required = &.{ "emailId", "attachmentId" },
     },
     .{
         .name = "create-draft",
