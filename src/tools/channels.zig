@@ -4,9 +4,17 @@ const std = @import("std");
 const types = @import("../types.zig");
 const graph = @import("../graph.zig");
 const json_rpc = @import("../json_rpc.zig");
+const formatter = @import("../formatter.zig");
 const ToolContext = @import("context.zig").ToolContext;
 
 const ObjectMap = std.json.ObjectMap;
+
+// Fields we surface from /me/joinedTeams and /teams/{id}/channels.
+// Both endpoints return items shaped `{id, displayName, description, ...}`.
+const team_or_channel_fields = [_]formatter.FieldSpec{
+    .{ .path = "displayName", .label = "name" },
+    .{ .path = "description", .label = "desc" },
+};
 
 /// Everything every channel-scoped handler needs: an auth token plus a
 /// team+channel ID pair extracted from the tool arguments.
@@ -38,7 +46,12 @@ pub fn handleListTeams(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(buildSummary(ctx, response) orelse "No teams found.");
+    if (formatter.summarizeArray(ctx.allocator, response, &team_or_channel_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No teams found.");
+    }
 }
 
 /// List channels in a Team.
@@ -56,7 +69,12 @@ pub fn handleListChannels(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(buildSummary(ctx, response) orelse "No channels found.");
+    if (formatter.summarizeArray(ctx.allocator, response, &team_or_channel_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No channels found.");
+    }
 }
 
 /// List messages (posts) in a Teams channel.
@@ -223,41 +241,6 @@ pub fn handleDeleteChannelReply(ctx: ToolContext) void {
 // ---------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------
-
-/// Build a condensed one-line-per-item summary from a Graph API response
-/// containing a "value" array with objects that have displayName, description, and id.
-fn buildSummary(ctx: ToolContext, response: []const u8) ?[]const u8 {
-    const parsed = std.json.parseFromSlice(std.json.Value, ctx.allocator, response, .{}) catch return null;
-    defer parsed.deinit();
-
-    const items = switch (parsed.value) {
-        .object => |o| switch (o.get("value") orelse return null) {
-            .array => |a| a.items,
-            else => return null,
-        },
-        else => return null,
-    };
-
-    var buf: std.Io.Writer.Allocating = .init(ctx.allocator);
-    defer buf.deinit();
-    const w = &buf.writer;
-
-    for (items) |item| {
-        const obj = switch (item) { .object => |o| o, else => continue };
-        const name = switch (obj.get("displayName") orelse continue) { .string => |s| s, else => continue };
-        const id = switch (obj.get("id") orelse continue) { .string => |s| s, else => continue };
-        const desc = switch (obj.get("description") orelse .null) { .string => |s| s, else => "" };
-
-        if (desc.len > 0) {
-            w.print("{s} — {s} — id: {s}\n", .{ name, desc, id }) catch continue;
-        } else {
-            w.print("{s} — id: {s}\n", .{ name, id }) catch continue;
-        }
-    }
-
-    const summary = buf.written();
-    return if (summary.len > 0) summary else null;
-}
 
 /// Write a text segment as HTML, converting newlines to <br>,
 /// wrapping URLs in <a> tags, and HTML-escaping all text.
@@ -471,21 +454,17 @@ test "buildMentionedMessage unmatched @ preserved" {
     try std.testing.expect(std.mem.indexOf(u8, result, "@unknown") != null);
 }
 
-test "buildSummary formats teams/channels" {
-    const allocator = std.testing.allocator;
-    const ctx = ToolContext{
-        .allocator = allocator,
-        .io = undefined,
-        .raw_message = undefined,
-    };
-
+test "teams/channels summary via formatter" {
     const response =
         \\{"value":[{"displayName":"Team A","id":"id-a","description":"Desc A"},{"displayName":"Team B","id":"id-b","description":""}]}
     ;
-    const result = buildSummary(ctx, response);
-    try std.testing.expect(result != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.?, "Team A — Desc A — id: id-a") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.?, "Team B — id: id-b") != null);
+    const result = formatter.summarizeArray(std.testing.allocator, response, &team_or_channel_fields).?;
+    defer std.testing.allocator.free(result);
+    try std.testing.expect(std.mem.indexOf(u8, result, "name: Team A") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "desc: Desc A") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "id: id-a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "name: Team B") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "id: id-b") != null);
 }
 
 test "writeHtmlLinked escapes HTML and links URLs" {
