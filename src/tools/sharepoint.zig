@@ -17,6 +17,7 @@ const graph = @import("../graph.zig");
 const url_util = @import("../url.zig");
 const json_rpc = @import("../json_rpc.zig");
 const mime = @import("../mime.zig");
+const json_util = @import("../json_util.zig");
 const ToolContext = @import("context.zig").ToolContext;
 
 const Value = std.json.Value;
@@ -266,7 +267,7 @@ fn uploadChunked(
     };
     defer ctx.allocator.free(session_resp);
 
-    const upload_url = extractStringField(ctx.allocator, session_resp, "uploadUrl") orelse {
+    const upload_url = json_util.extractString(ctx.allocator, session_resp, "uploadUrl") orelse {
         const err_msg = std.fmt.allocPrint(ctx.allocator, "Upload session response missing uploadUrl: {s}", .{session_resp}) catch return;
         defer ctx.allocator.free(err_msg);
         ctx.sendResult(err_msg);
@@ -451,20 +452,3 @@ pub fn handleDownloadFile(ctx: ToolContext) void {
     ctx.sendResult(response);
 }
 
-/// Extract a top-level string field from a JSON response body.
-/// Returns a newly-allocated copy (or null on any parse / shape failure) —
-/// caller owns the result.
-fn extractStringField(allocator: std.mem.Allocator, json_text: []const u8, key: []const u8) ?[]u8 {
-    const parsed = std.json.parseFromSlice(Value, allocator, json_text, .{}) catch return null;
-    defer parsed.deinit();
-    const obj = switch (parsed.value) {
-        .object => |o| o,
-        else => return null,
-    };
-    const val = obj.get(key) orelse return null;
-    const s = switch (val) {
-        .string => |str| str,
-        else => return null,
-    };
-    return allocator.dupe(u8, s) catch null;
-}
