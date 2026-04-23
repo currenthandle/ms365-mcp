@@ -303,6 +303,29 @@ const sp_list_items_props = [_]PropSpec{
     .{ .name = "folderPath", .type = "string", .description = "Optional folder path relative to drive root (e.g. '2026/Q1'). Omit to list root." },
 };
 
+// --- OneDrive (personal /me/drive) props ---
+
+const od_list_items_props = [_]PropSpec{
+    .{ .name = "folderPath", .type = "string", .description = "Optional folder path relative to OneDrive root. Omit to list root." },
+};
+
+const od_upload_file_props = [_]PropSpec{
+    .{ .name = "path", .type = "string", .description = "Destination path in OneDrive (e.g. 'Documents/report.pdf'). Must not start with '/' or contain '..'." },
+    .{ .name = "filePath", .type = "string", .description = "Local absolute path to the file to upload." },
+    .{ .name = "contentType", .type = "string", .description = "Optional MIME type override." },
+};
+
+const od_upload_content_props = [_]PropSpec{
+    .{ .name = "path", .type = "string", .description = "Destination path in OneDrive." },
+    .{ .name = "content", .type = "string", .description = "Raw string content (markdown, text, JSON, etc.) to upload." },
+    .{ .name = "contentType", .type = "string", .description = "Optional MIME type override." },
+};
+
+const od_item_target_props = [_]PropSpec{
+    .{ .name = "path", .type = "string", .description = "Path of the item relative to OneDrive root. Pass this OR itemId, not both." },
+    .{ .name = "itemId", .type = "string", .description = "Alternative to path: the drive item's ID. Pass this OR path, not both." },
+};
+
 const sp_upload_file_props = [_]PropSpec{
     sp_site_id_prop,
     sp_drive_id_prop,
@@ -641,6 +664,34 @@ const all_tools = [_]ToolSpec{
         .description = "Download a file's contents from a SharePoint drive. Identify the file by either 'path' or 'itemId'. Provide exactly one. Returns the raw file bytes.",
         .props = &sp_download_file_props,
         .required = &.{ "siteId", "driveId" },
+    },
+    // --- OneDrive (personal) ---
+    .{
+        .name = "list-onedrive-items",
+        .description = "List files and folders in the signed-in user's personal OneDrive. Omit folderPath to list root.",
+        .props = &od_list_items_props,
+    },
+    .{
+        .name = "upload-onedrive-file",
+        .description = "Upload a local file to OneDrive at 'path'. Auto-chunks files larger than 4 MiB.",
+        .props = &od_upload_file_props,
+        .required = &.{ "path", "filePath" },
+    },
+    .{
+        .name = "upload-onedrive-content",
+        .description = "Upload a raw string (markdown, text, JSON, etc.) to OneDrive at 'path'.",
+        .props = &od_upload_content_props,
+        .required = &.{ "path", "content" },
+    },
+    .{
+        .name = "download-onedrive-file",
+        .description = "Download a OneDrive file by path or itemId. Writes bytes to a temp path and returns the local path — binary-safe.",
+        .props = &od_item_target_props,
+    },
+    .{
+        .name = "delete-onedrive-item",
+        .description = "Delete a OneDrive file or folder by path or itemId.",
+        .props = &od_item_target_props,
     },
     // --- Utility ---
     .{

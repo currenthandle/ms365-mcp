@@ -37,6 +37,7 @@ const calendar_tools = @import("tools/calendar.zig");
 const chat_tools = @import("tools/chat.zig");
 const channel_tools = @import("tools/channels.zig");
 const sharepoint_tools = @import("tools/sharepoint.zig");
+const onedrive_tools = @import("tools/onedrive.zig");
 const user_tools = @import("tools/users.zig");
 const ToolContext = @import("tools/context.zig").ToolContext;
 
@@ -114,6 +115,12 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "create-sharepoint-folder", sharepoint_tools.handleCreateFolder },
     .{ "delete-sharepoint-item", sharepoint_tools.handleDeleteItem },
     .{ "download-sharepoint-file", sharepoint_tools.handleDownloadFile },
+    // --- OneDrive (personal) ---
+    .{ "list-onedrive-items", onedrive_tools.handleListItems },
+    .{ "upload-onedrive-file", onedrive_tools.handleUploadFile },
+    .{ "upload-onedrive-content", onedrive_tools.handleUploadContent },
+    .{ "download-onedrive-file", onedrive_tools.handleDownloadFile },
+    .{ "delete-onedrive-item", onedrive_tools.handleDeleteItem },
     // --- Utility ---
     .{ "search-users", user_tools.handleSearchUsers },
     .{ "get-profile", user_tools.handleGetProfile },
