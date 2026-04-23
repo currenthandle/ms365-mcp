@@ -2,7 +2,9 @@
 
 A lightweight Microsoft 365 MCP server written in Zig. ~4.6k lines of code, ~5.7MB binary, no runtime dependencies.
 
-Exposes Microsoft Graph API functionality — Teams, Outlook, and Calendar — as MCP tools for use with LLM agents.
+Exposes Microsoft Graph API functionality — Teams, Outlook, Calendar, SharePoint, and OneDrive — as MCP tools for use with LLM agents.
+
+**Non-technical readers:** see [docs/sales-agent-capabilities.md](docs/sales-agent-capabilities.md) for a one-page tour of what the tool unlocks for sales workflows.
 
 ## Install
 
