@@ -5,8 +5,16 @@ const types = @import("../types.zig");
 const graph = @import("../graph.zig");
 const json_rpc = @import("../json_rpc.zig");
 const ToolContext = @import("context.zig").ToolContext;
+const formatter = @import("../formatter.zig");
 
 const Allocator = std.mem.Allocator;
+
+// Fields surfaced from /me/chats/{id}/messages.
+const chat_message_fields = [_]formatter.FieldSpec{
+    .{ .path = "createdDateTime", .label = "sent" },
+    .{ .path = "from.user.displayName", .label = "from" },
+    .{ .path = "body.content", .label = "body", .newline_after = true },
+};
 
 /// Build a single member JSON object for the create-chat API.
 /// Uses JSON serialization to safely escape the identifier.
@@ -51,7 +59,12 @@ pub fn handleListChatMessages(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &chat_message_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No messages in this chat.");
+    }
 }
 
 /// List Teams chats with condensed member summaries.

@@ -8,6 +8,17 @@ const ToolContext = @import("context.zig").ToolContext;
 const email_tools = @import("email.zig");
 const mime = @import("../mime.zig");
 const json_util = @import("../json_util.zig");
+const formatter = @import("../formatter.zig");
+
+const attachment_fields = [_]formatter.FieldSpec{
+    .{ .path = "name", .label = "name" },
+    .{ .path = "contentType", .label = "type" },
+    // size is a number — formatter only outputs strings for now, so it
+    // gets silently skipped. No regression; we keep the FieldSpec line as
+    // documentation of what we'd LIKE to surface if/when formatter grows
+    // numeric support.
+    .{ .path = "size", .label = "bytes" },
+};
 
 const Value = std.json.Value;
 const ObjectMap = std.json.ObjectMap;
@@ -245,7 +256,12 @@ pub fn handleListAttachments(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &attachment_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No attachments on this draft.");
+    }
 }
 
 /// Remove an attachment from a draft email.

@@ -16,6 +16,14 @@ const team_or_channel_fields = [_]formatter.FieldSpec{
     .{ .path = "description", .label = "desc" },
 };
 
+// Fields surfaced from channel messages + replies (same shape for both).
+const channel_message_fields = [_]formatter.FieldSpec{
+    .{ .path = "createdDateTime", .label = "sent" },
+    .{ .path = "from.user.displayName", .label = "from" },
+    .{ .path = "subject", .label = "subject" },
+    .{ .path = "body.content", .label = "body", .newline_after = true },
+};
+
 /// Everything every channel-scoped handler needs: an auth token plus a
 /// team+channel ID pair extracted from the tool arguments.
 /// Returned by `authAndChannel`; handlers short-circuit via `orelse return`.
@@ -102,7 +110,12 @@ pub fn handleListChannelMessages(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &channel_message_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No messages in this channel.");
+    }
 }
 
 /// Get replies to a specific message thread in a Teams channel.
@@ -131,7 +144,12 @@ pub fn handleGetChannelMessageReplies(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &channel_message_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No replies to this message.");
+    }
 }
 
 /// Post a new top-level message to a Teams channel. Supports @mentions and optional subject.

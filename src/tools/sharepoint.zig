@@ -18,7 +18,24 @@ const url_util = @import("../url.zig");
 const json_rpc = @import("../json_rpc.zig");
 const mime = @import("../mime.zig");
 const json_util = @import("../json_util.zig");
+const formatter = @import("../formatter.zig");
 const ToolContext = @import("context.zig").ToolContext;
+
+const sp_site_fields = [_]formatter.FieldSpec{
+    .{ .path = "displayName", .label = "name" },
+    .{ .path = "name", .label = "urlName" },
+};
+
+const sp_drive_fields = [_]formatter.FieldSpec{
+    .{ .path = "name", .label = "name" },
+    .{ .path = "driveType", .label = "type" },
+};
+
+const sp_item_fields = [_]formatter.FieldSpec{
+    .{ .path = "name", .label = "name" },
+    .{ .path = "size", .label = "size" }, // number — skipped by formatter (only strings resolve), keeping for future
+    .{ .path = "lastModifiedDateTime", .label = "modified" },
+};
 
 const Value = std.json.Value;
 const ObjectMap = std.json.ObjectMap;
@@ -85,7 +102,12 @@ pub fn handleSearchSites(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &sp_site_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No SharePoint sites matched that query.");
+    }
 }
 
 /// List document libraries (drives) in a SharePoint site.
@@ -103,7 +125,12 @@ pub fn handleListDrives(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &sp_drive_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No drives in this site.");
+    }
 }
 
 /// List items (files + folders) at a path inside a drive.
@@ -131,7 +158,12 @@ pub fn handleListItems(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &sp_item_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("Folder is empty.");
+    }
 }
 
 // --- Upload tools ---

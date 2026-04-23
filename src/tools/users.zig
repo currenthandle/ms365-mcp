@@ -3,7 +3,19 @@
 const std = @import("std");
 const graph = @import("../graph.zig");
 const url = @import("../url.zig");
+const formatter = @import("../formatter.zig");
 const ToolContext = @import("context.zig").ToolContext;
+
+const search_user_fields = [_]formatter.FieldSpec{
+    .{ .path = "displayName", .label = "name" },
+    .{ .path = "userPrincipalName", .label = "upn" },
+};
+
+const profile_fields = [_]formatter.FieldSpec{
+    .{ .path = "displayName", .label = "name" },
+    .{ .path = "mail", .label = "mail" },
+    .{ .path = "userPrincipalName", .label = "upn" },
+};
 
 /// Search for people in the Microsoft 365 organization by name.
 pub fn handleSearchUsers(ctx: ToolContext) void {
@@ -29,7 +41,12 @@ pub fn handleSearchUsers(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &search_user_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No users found matching that query.");
+    }
 }
 
 /// Get the logged-in user's Microsoft 365 profile.
@@ -45,5 +62,10 @@ pub fn handleGetProfile(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeObject(ctx.allocator, response, &profile_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("Profile not found.");
+    }
 }

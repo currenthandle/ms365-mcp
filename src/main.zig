@@ -40,12 +40,6 @@ const sharepoint_tools = @import("tools/sharepoint.zig");
 const user_tools = @import("tools/users.zig");
 const ToolContext = @import("tools/context.zig").ToolContext;
 
-// Pulled in for test discovery — `zig build test` walks @imports from main.zig.
-// Once a caller actually uses these, the blank `_ =` line can go away.
-comptime {
-    _ = @import("formatter.zig");
-}
-
 // Type aliases — keeps function signatures cleaner.
 const Allocator = std.mem.Allocator;
 const Reader = std.Io.Reader;
