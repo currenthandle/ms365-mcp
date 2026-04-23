@@ -62,8 +62,8 @@ pub fn handleCreateDraft(ctx: ToolContext) void {
     defer json_buf.deinit();
     std.json.Stringify.value(draft_request, .{ .emit_null_optional_fields = false }, &json_buf.writer) catch return;
 
-    const response = graph.post(ctx.allocator, ctx.io, token, "/me/messages", json_buf.written()) catch {
-        ctx.sendResult("Failed to create draft.");
+    const response = graph.post(ctx.allocator, ctx.io, token, "/me/messages", json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -88,8 +88,8 @@ pub fn handleSendDraft(ctx: ToolContext) void {
     defer ctx.allocator.free(path);
 
     // Empty JSON body required — Zig's HTTP client asserts on POST with null payload.
-    _ = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch {
-        ctx.sendResult("Failed to send draft.");
+    _ = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -144,8 +144,8 @@ pub fn handleUpdateDraft(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}", .{draft_id}) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.patch(ctx.allocator, ctx.io, token, path, json_buf.written()) catch {
-        ctx.sendResult("Failed to update draft.");
+    _ = graph.patch(ctx.allocator, ctx.io, token, path, json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -161,8 +161,8 @@ pub fn handleDeleteDraft(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}", .{draft_id}) catch return;
     defer ctx.allocator.free(path);
 
-    graph.delete(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to delete draft.");
+    graph.delete(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -227,8 +227,8 @@ pub fn handleAddAttachment(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}/attachments", .{draft_id}) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.post(ctx.allocator, ctx.io, token, path, json_buf.written()) catch {
-        ctx.sendResult("Failed to add attachment.");
+    const response = graph.post(ctx.allocator, ctx.io, token, path, json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -250,8 +250,8 @@ pub fn handleListAttachments(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}/attachments", .{draft_id}) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to list attachments.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -274,8 +274,8 @@ pub fn handleRemoveAttachment(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}/attachments/{s}", .{ draft_id, attachment_id }) catch return;
     defer ctx.allocator.free(path);
 
-    graph.delete(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to remove attachment.");
+    graph.delete(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 

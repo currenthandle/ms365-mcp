@@ -96,8 +96,8 @@ pub fn handleSearchSites(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/sites?search={s}&$select=id,name,displayName,webUrl", .{encoded_query}) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to search SharePoint sites.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -119,8 +119,8 @@ pub fn handleListDrives(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/sites/{s}/drives?$select=id,name,webUrl,driveType", .{site_id}) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to list SharePoint drives.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -152,8 +152,8 @@ pub fn handleListItems(ctx: ToolContext) void {
     } else std.fmt.allocPrint(ctx.allocator, "/sites/{s}/drives/{s}/root/children", .{ site_id, drive_id }) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to list SharePoint items.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -256,8 +256,8 @@ fn uploadSimple(
     const path = std.fmt.allocPrint(ctx.allocator, "/sites/{s}/drives/{s}/root:/{s}:/content", .{ site_id, drive_id, escaped }) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.put(ctx.allocator, ctx.io, token, path, data, content_type) catch {
-        ctx.sendResult("Failed to upload file to SharePoint.");
+    const response = graph.put(ctx.allocator, ctx.io, token, path, data, content_type) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -293,8 +293,8 @@ fn uploadChunked(
         \\{"item":{"@microsoft.graph.conflictBehavior":"replace"}}
     ;
 
-    const session_resp = graph.post(ctx.allocator, ctx.io, token, session_path, session_body) catch {
-        ctx.sendResult("Failed to create SharePoint upload session.");
+    const session_resp = graph.post(ctx.allocator, ctx.io, token, session_path, session_body) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(session_resp);
@@ -326,8 +326,8 @@ fn uploadChunked(
         ) catch return;
         defer ctx.allocator.free(range);
 
-        const chunk_resp = graph.putChunk(ctx.allocator, ctx.io, upload_url, chunk, range) catch {
-            ctx.sendResult("Failed to upload chunk to SharePoint.");
+        const chunk_resp = graph.putChunk(ctx.allocator, ctx.io, upload_url, chunk, range) catch |err| {
+            ctx.sendGraphError(err);
             return;
         };
         // Replace last_response each iteration — only the final chunk's
@@ -389,8 +389,8 @@ pub fn handleCreateFolder(ctx: ToolContext) void {
     defer json_buf.deinit();
     std.json.Stringify.value(Value{ .object = body }, .{}, &json_buf.writer) catch return;
 
-    const response = graph.post(ctx.allocator, ctx.io, token, endpoint, json_buf.written()) catch {
-        ctx.sendResult("Failed to create SharePoint folder.");
+    const response = graph.post(ctx.allocator, ctx.io, token, endpoint, json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -432,8 +432,8 @@ pub fn handleDeleteItem(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(endpoint);
 
-    graph.delete(ctx.allocator, ctx.io, token, endpoint) catch {
-        ctx.sendResult("Failed to delete SharePoint item.");
+    graph.delete(ctx.allocator, ctx.io, token, endpoint) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -475,8 +475,8 @@ pub fn handleDownloadFile(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(endpoint);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, endpoint) catch {
-        ctx.sendResult("Failed to download SharePoint file.");
+    const response = graph.get(ctx.allocator, ctx.io, token, endpoint) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);

@@ -48,8 +48,8 @@ fn authAndChannel(ctx: ToolContext, missing_args_msg: []const u8) ?ChannelAuth {
 pub fn handleListTeams(ctx: ToolContext) void {
     const token = ctx.requireAuth() orelse return;
 
-    const response = graph.get(ctx.allocator, ctx.io, token, "/me/joinedTeams?$select=id,displayName,description") catch {
-        ctx.sendResult("Failed to fetch teams.");
+    const response = graph.get(ctx.allocator, ctx.io, token, "/me/joinedTeams?$select=id,displayName,description") catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -71,8 +71,8 @@ pub fn handleListChannels(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels?$select=id,displayName,description", .{team_id}) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to fetch channels.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -104,8 +104,8 @@ pub fn handleListChannelMessages(ctx: ToolContext) void {
     };
     defer if (page_token == null) ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to fetch channel messages.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -138,8 +138,8 @@ pub fn handleGetChannelMessageReplies(ctx: ToolContext) void {
     };
     defer if (page_token == null) ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to fetch message replies.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -182,8 +182,8 @@ pub fn handlePostChannelMessage(ctx: ToolContext) void {
         w.writeAll("}") catch return;
     }
 
-    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, json_buf.written()) catch {
-        ctx.sendResult("Failed to post channel message.");
+    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -215,8 +215,8 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
         std.json.Stringify.value(body, .{}, w) catch return;
     }
 
-    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, json_buf.written()) catch {
-        ctx.sendResult("Failed to send reply.");
+    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -231,8 +231,8 @@ pub fn handleDeleteChannelMessage(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/softDelete", .{ ch.team_id, ch.channel_id, message_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, "{}") catch {
-        ctx.sendResult("Failed to delete channel message.");
+    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, "{}") catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -248,8 +248,8 @@ pub fn handleDeleteChannelReply(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/replies/{s}/softDelete", .{ ch.team_id, ch.channel_id, message_id, reply_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, "{}") catch {
-        ctx.sendResult("Failed to delete channel reply.");
+    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, "{}") catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 

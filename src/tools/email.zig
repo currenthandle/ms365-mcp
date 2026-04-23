@@ -68,8 +68,8 @@ pub fn handleListEmails(ctx: ToolContext) void {
     const response = graph.get(
         ctx.allocator, ctx.io, token,
         "/me/messages?$top=10&$select=id,subject,from,receivedDateTime,bodyPreview,webLink&$orderby=receivedDateTime%20desc",
-    ) catch {
-        ctx.sendResult("Failed to fetch emails.");
+    ) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -95,8 +95,8 @@ pub fn handleReadEmail(ctx: ToolContext) void {
     ) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to fetch email.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -141,8 +141,8 @@ pub fn handleSendEmail(ctx: ToolContext) void {
     defer json_buf.deinit();
     std.json.Stringify.value(mail_request, .{ .emit_null_optional_fields = false }, &json_buf.writer) catch return;
 
-    _ = graph.post(ctx.allocator, ctx.io, token, "/me/sendMail", json_buf.written()) catch {
-        ctx.sendResult("Failed to send email.");
+    _ = graph.post(ctx.allocator, ctx.io, token, "/me/sendMail", json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -158,8 +158,8 @@ pub fn handleDeleteEmail(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}", .{email_id}) catch return;
     defer ctx.allocator.free(path);
 
-    graph.delete(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to delete email.");
+    graph.delete(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 

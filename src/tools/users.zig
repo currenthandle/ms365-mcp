@@ -35,8 +35,8 @@ pub fn handleSearchUsers(ctx: ToolContext) void {
     ) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to search users.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -56,8 +56,8 @@ pub fn handleGetProfile(ctx: ToolContext) void {
     const response = graph.get(
         ctx.allocator, ctx.io, token,
         "/me?$select=id,displayName,mail,userPrincipalName",
-    ) catch {
-        ctx.sendResult("Failed to fetch profile.");
+    ) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);

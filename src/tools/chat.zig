@@ -53,8 +53,8 @@ pub fn handleListChatMessages(ctx: ToolContext) void {
     };
     defer if (page_token == null) ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to fetch chat messages.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -89,8 +89,8 @@ pub fn handleListChats(ctx: ToolContext) void {
     };
     defer if (page_token == null) ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to fetch chats.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -163,8 +163,8 @@ pub fn handleSendChatMessage(ctx: ToolContext) void {
     defer json_buf.deinit();
     std.json.Stringify.value(chat_msg, .{}, &json_buf.writer) catch return;
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, json_buf.written()) catch {
-        ctx.sendResult("Failed to send chat message.");
+    _ = graph.post(ctx.allocator, ctx.io, token, path, json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -188,8 +188,8 @@ pub fn handleCreateChat(ctx: ToolContext) void {
     , .{ member1, member2 }) catch return;
     defer ctx.allocator.free(json_body);
 
-    const response = graph.post(ctx.allocator, ctx.io, token, "/me/chats", json_body) catch {
-        ctx.sendResult("Failed to create chat.");
+    const response = graph.post(ctx.allocator, ctx.io, token, "/me/chats", json_body) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -207,8 +207,8 @@ pub fn handleDeleteChatMessage(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/chats/{s}/messages/{s}/softDelete", .{ chat_id, message_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch {
-        ctx.sendResult("Failed to delete chat message.");
+    _ = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 

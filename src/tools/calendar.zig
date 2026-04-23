@@ -79,8 +79,8 @@ pub fn handleGetCalendarEvent(ctx: ToolContext) void {
     ) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to fetch calendar event.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -136,8 +136,8 @@ pub fn handleUpdateCalendarEvent(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/events/{s}", .{event_id}) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.patch(ctx.allocator, ctx.io, token, path, json_buf.written()) catch {
-        ctx.sendResult("Failed to update calendar event.");
+    const response = graph.patch(ctx.allocator, ctx.io, token, path, json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -154,8 +154,8 @@ pub fn handleDeleteCalendarEvent(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/events/{s}", .{event_id}) catch return;
     defer ctx.allocator.free(path);
 
-    graph.delete(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to delete calendar event.");
+    graph.delete(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -210,8 +210,8 @@ pub fn handleCreateCalendarEvent(ctx: ToolContext) void {
     defer json_buf.deinit();
     std.json.Stringify.value(event_request, .{ .emit_null_optional_fields = false }, &json_buf.writer) catch return;
 
-    const response = graph.post(ctx.allocator, ctx.io, token, "/me/events", json_buf.written()) catch {
-        ctx.sendResult("Failed to create calendar event.");
+    const response = graph.post(ctx.allocator, ctx.io, token, "/me/events", json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -250,8 +250,8 @@ pub fn handleListCalendarEvents(ctx: ToolContext) void {
     const prefer = std.fmt.allocPrint(ctx.allocator, "outlook.timezone=\"{s}\"", .{ctx.state.timezone}) catch return;
     defer ctx.allocator.free(prefer);
 
-    const response = graph.getWithPrefer(ctx.allocator, ctx.io, token, path, prefer) catch {
-        ctx.sendResult("Failed to fetch calendar events.");
+    const response = graph.getWithPrefer(ctx.allocator, ctx.io, token, path, prefer) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);

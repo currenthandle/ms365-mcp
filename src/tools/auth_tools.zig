@@ -63,8 +63,8 @@ pub fn handleVerifyLogin(ctx: ToolContext) void {
 pub fn handleGetMailboxSettings(ctx: ToolContext) void {
     const token = ctx.requireAuth() orelse return;
 
-    const response = graph.get(ctx.allocator, ctx.io, token, "/me/mailboxSettings") catch {
-        ctx.sendResult("Failed to fetch mailbox settings.");
+    const response = graph.get(ctx.allocator, ctx.io, token, "/me/mailboxSettings") catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -95,8 +95,8 @@ pub fn handleSyncTimezone(ctx: ToolContext) void {
     const patch_body = std.fmt.allocPrint(ctx.allocator, "{{\"timeZone\":\"{s}\"}}", .{windows_tz}) catch return;
     defer ctx.allocator.free(patch_body);
 
-    _ = graph.patch(ctx.allocator, ctx.io, token, "/me/mailboxSettings", patch_body) catch {
-        ctx.sendResult("Failed to update mailbox timezone.");
+    _ = graph.patch(ctx.allocator, ctx.io, token, "/me/mailboxSettings", patch_body) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
