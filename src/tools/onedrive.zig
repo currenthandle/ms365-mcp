@@ -71,8 +71,11 @@ fn escapePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
 /// List items at the drive root or at an optional folder path.
 pub fn handleListItems(ctx: ToolContext) void {
     const token = ctx.requireAuth() orelse return;
-    const args = ctx.getArgs("Optional folderPath argument.") orelse ObjectMap.empty;
-    const folder_path = json_rpc.getStringArg(args, "folderPath");
+    // Arguments are optional for this tool (omitting them lists drive root).
+    // Skip ctx.getArgs — it sends an error response when args are absent,
+    // which would double-respond for an intentionally-argless call.
+    const maybe_args = json_rpc.getToolArgs(ctx.parsed);
+    const folder_path = if (maybe_args) |a| json_rpc.getStringArg(a, "folderPath") else null;
 
     const path = if (folder_path) |fp| blk: {
         if (!isPathSafe(fp)) {

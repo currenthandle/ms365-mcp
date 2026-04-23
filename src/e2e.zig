@@ -117,6 +117,25 @@ pub fn main() !void {
     if (shouldRun("email")) {
         std.debug.print("\n\x1b[1mLifecycle — Email:\x1b[0m\n", .{});
         try cases.testSendEmailLifecycle(&client);
+        try cases.testEmailReplyLifecycle(&client);
+        try cases.testEmailForwardLifecycle(&client);
+        try cases.testEmailSearch(&client);
+        try cases.testListMailFolders(&client);
+        try cases.testMarkReadLifecycle(&client);
+        try cases.testMoveEmailLifecycle(&client);
+        try cases.testEmailAttachmentDownload(&client);
+    }
+
+    if (shouldRun("calendar-schedule")) {
+        std.debug.print("\n\x1b[1mLifecycle — Calendar Scheduling:\x1b[0m\n", .{});
+        try cases.testGetSchedule(&client);
+        try cases.testFindMeetingTimes(&client);
+        try cases.testRespondToEvent(&client);
+    }
+
+    if (shouldRun("onedrive")) {
+        std.debug.print("\n\x1b[1mLifecycle — OneDrive:\x1b[0m\n", .{});
+        try cases.testOneDriveLifecycle(&client);
     }
 
     if (shouldRun("chat")) {

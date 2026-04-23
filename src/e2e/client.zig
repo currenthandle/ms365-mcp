@@ -14,6 +14,9 @@ pub const McpClient = struct {
     file_reader: std.Io.File.Reader,
     file_writer: std.Io.File.Writer,
     allocator: Allocator,
+    /// The Io context the client was initialized with — tests may need it
+    /// (e.g. to read files verifying a binary-safe download worked).
+    io: Io,
     next_id: i64 = 1,
 
     // Buffers must live as long as the client — stored here.
@@ -33,6 +36,7 @@ pub const McpClient = struct {
             .file_reader = undefined,
             .file_writer = undefined,
             .allocator = allocator,
+            .io = io,
         };
 
         // Create buffered reader/writer from the child's pipes.
