@@ -11,8 +11,9 @@
 //   - std.c.getpid is the POSIX getpid(2). Called once so each server
 //     process gets a unique prefix (avoids colliding with a second server
 //     instance running in the same /tmp).
-//   - std.time.nanoTimestamp returns an i128 — nanoseconds since epoch.
-//     We use it to make each call within this process get a unique dir.
+//   - std.atomic.Value is a lock-free atomic integer, like Rust's
+//     AtomicUsize. We bump it per-call to give each download its own
+//     directory suffix — no clock lookup needed.
 //   - std.Io.Dir.cwd() is like Python's os.getcwd() wrapped as a Dir
 //     handle. createDirPath on cwd with an absolute sub_path is the Zig
 //     0.16 way to `mkdir -p /tmp/whatever`.
@@ -25,6 +26,12 @@ const Io = std.Io;
 /// Parent temp directory under which every download gets its own subdir.
 /// macOS and Linux agree /tmp exists; Windows support is out of scope.
 const temp_parent = "/tmp";
+
+/// Per-process counter bumped on every saveToTempFile call so two
+/// downloads within the same process never collide on directory name.
+/// std.atomic.Value is lock-free; .fetchAdd returns the value before the
+/// increment, like Rust's AtomicUsize::fetch_add.
+var download_counter: std.atomic.Value(u64) = .init(0);
 
 /// Write `bytes` to a fresh temp file and return its absolute path.
 ///
@@ -45,13 +52,13 @@ pub fn saveToTempFile(
     bytes: []const u8,
 ) ![]u8 {
     const pid = std.c.getpid();
-    const now: i128 = std.time.nanoTimestamp();
+    const n = download_counter.fetchAdd(1, .monotonic);
 
-    // Build the per-call directory path, e.g. "/tmp/ms-mcp-12345-1729876543210000000".
+    // Build the per-call directory path, e.g. "/tmp/ms-mcp-12345-0".
     const dir_path = try std.fmt.allocPrint(
         allocator,
         "{s}/ms-mcp-{d}-{d}",
-        .{ temp_parent, pid, now },
+        .{ temp_parent, pid, n },
     );
     defer allocator.free(dir_path);
 

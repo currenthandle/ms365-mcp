@@ -19,6 +19,7 @@ const json_rpc = @import("../json_rpc.zig");
 const mime = @import("../mime.zig");
 const json_util = @import("../json_util.zig");
 const formatter = @import("../formatter.zig");
+const binary_download = @import("../binary_download.zig");
 const ToolContext = @import("context.zig").ToolContext;
 
 const sp_site_fields = [_]formatter.FieldSpec{
@@ -481,6 +482,33 @@ pub fn handleDownloadFile(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    // Derive a suggested filename from the last segment of the SharePoint
+    // path. For itemId lookups we don't know the name up-front; fall back
+    // to the generic sanitizeName default by passing an empty string.
+    const suggested_name = if (sp_path) |p| blk: {
+        if (std.mem.lastIndexOfScalar(u8, p, '/')) |i| break :blk p[i + 1 ..];
+        break :blk p;
+    } else "";
+
+    const local_path = binary_download.saveToTempFile(
+        ctx.allocator,
+        ctx.io,
+        suggested_name,
+        response,
+    ) catch {
+        ctx.sendResult("Failed to write downloaded file to a temp path.");
+        return;
+    };
+    defer ctx.allocator.free(local_path);
+
+    // Pipe-delimited key:value format: easy for the LLM to parse; easy
+    // for a human to read in the chat UI.
+    const msg = std.fmt.allocPrint(
+        ctx.allocator,
+        "Downloaded {d} bytes | local_path: {s}",
+        .{ response.len, local_path },
+    ) catch return;
+    defer ctx.allocator.free(msg);
+    ctx.sendResult(msg);
 }
 
