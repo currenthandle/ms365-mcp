@@ -112,9 +112,11 @@ pub fn findChatByMember(allocator: Allocator, summary: []const u8, member_name: 
 
         if (std.mem.indexOf(u8, lower_line, lower_name) == null) continue;
 
-        // Extract the chat ID after "— id: ".
-        if (std.mem.indexOf(u8, line, "— id: ")) |id_start| {
-            const id = line[id_start + 6 ..];
+        // Extract the chat ID after "— id: ". Em-dash is 3 UTF-8 bytes;
+        // plus space(1) + "id:"(3) + space(1) = 8 total, not 6.
+        const marker = "— id: ";
+        if (std.mem.indexOf(u8, line, marker)) |id_start| {
+            const id = line[id_start + marker.len ..];
             if (id.len == 0) continue;
 
             if (std.mem.startsWith(u8, line, "[oneOnOne]")) {
