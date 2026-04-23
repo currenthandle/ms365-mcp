@@ -416,7 +416,13 @@ const all_tools = [_]ToolSpec{
     },
     .{
         .name = "read-email-attachment",
-        .description = "Fetch an email attachment's metadata plus its base64-encoded bytes. Suitable for small text attachments. For binary files (PDFs, images), see download-email-attachment (coming in a later phase).",
+        .description = "Fetch an email attachment's metadata plus its base64-encoded bytes. Suitable for small text attachments. For binary files (PDFs, images, etc.) use download-email-attachment instead.",
+        .props = &read_email_attachment_props,
+        .required = &.{ "emailId", "attachmentId" },
+    },
+    .{
+        .name = "download-email-attachment",
+        .description = "Download a binary email attachment to a local temp file and return its absolute path. Use this for PDFs, images, videos — any file where returning raw bytes inline would corrupt the JSON-RPC channel. Returns the temp path for a follow-up tool call to read.",
         .props = &read_email_attachment_props,
         .required = &.{ "emailId", "attachmentId" },
     },

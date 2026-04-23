@@ -7,6 +7,8 @@ const json_rpc = @import("../json_rpc.zig");
 const url_util = @import("../url.zig");
 const ToolContext = @import("context.zig").ToolContext;
 const formatter = @import("../formatter.zig");
+const json_util = @import("../json_util.zig");
+const binary_download = @import("../binary_download.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
@@ -423,6 +425,78 @@ pub fn handleReadEmailAttachment(ctx: ToolContext) void {
     } else {
         ctx.sendResult("Attachment not found.");
     }
+}
+
+/// Download a binary email attachment to a temp file.
+/// Graph: GET /me/messages/{id}/attachments/{aid} — same endpoint as
+/// read-email-attachment, but we base64-decode `contentBytes` and write
+/// the raw bytes to /tmp/ via binary_download.saveToTempFile.
+///
+/// Text attachments also work here, but for small text blobs
+/// read-email-attachment is easier because it returns the base64 inline.
+pub fn handleDownloadEmailAttachment(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide emailId and attachmentId.") orelse return;
+    const email_id = ctx.getPathArg(args, "emailId", "Missing 'emailId' argument.") orelse return;
+    const attach_id = ctx.getPathArg(args, "attachmentId", "Missing 'attachmentId' argument.") orelse return;
+
+    const path = std.fmt.allocPrint(
+        ctx.allocator,
+        "/me/messages/{s}/attachments/{s}",
+        .{ email_id, attach_id },
+    ) catch return;
+    defer ctx.allocator.free(path);
+
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
+        return;
+    };
+    defer ctx.allocator.free(response);
+
+    // Pull `name` and `contentBytes` out of the response. contentBytes is
+    // base64-encoded per Graph's FileAttachment schema.
+    const name = json_util.extractString(ctx.allocator, response, "name") orelse
+        (ctx.allocator.dupe(u8, "attachment.bin") catch return);
+    defer ctx.allocator.free(name);
+
+    const b64 = json_util.extractString(ctx.allocator, response, "contentBytes") orelse {
+        ctx.sendResult("Attachment response missing contentBytes — is this a reference attachment (ItemAttachment)? Only FileAttachment is supported.");
+        return;
+    };
+    defer ctx.allocator.free(b64);
+
+    // base64.standard.Decoder.calcSizeForSlice tells us the exact decoded
+    // byte count; allocate a buffer that size, then decode into it.
+    const decoder = std.base64.standard.Decoder;
+    const decoded_len = decoder.calcSizeForSlice(b64) catch {
+        ctx.sendResult("Attachment contentBytes is not valid base64.");
+        return;
+    };
+    const decoded = ctx.allocator.alloc(u8, decoded_len) catch return;
+    defer ctx.allocator.free(decoded);
+    decoder.decode(decoded, b64) catch {
+        ctx.sendResult("Failed to decode attachment contentBytes.");
+        return;
+    };
+
+    const local_path = binary_download.saveToTempFile(
+        ctx.allocator,
+        ctx.io,
+        name,
+        decoded,
+    ) catch {
+        ctx.sendResult("Failed to write attachment to a temp path.");
+        return;
+    };
+    defer ctx.allocator.free(local_path);
+
+    const msg = std.fmt.allocPrint(
+        ctx.allocator,
+        "Downloaded {d} bytes | name: {s} | local_path: {s}",
+        .{ decoded.len, name, local_path },
+    ) catch return;
+    defer ctx.allocator.free(msg);
+    ctx.sendResult(msg);
 }
 
 /// Mark an email read or unread by flipping its isRead boolean.

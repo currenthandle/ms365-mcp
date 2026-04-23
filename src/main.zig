@@ -72,6 +72,7 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "move-email", email_tools.handleMoveEmail },
     .{ "list-email-attachments", email_tools.handleListEmailAttachments },
     .{ "read-email-attachment", email_tools.handleReadEmailAttachment },
+    .{ "download-email-attachment", email_tools.handleDownloadEmailAttachment },
     // --- Drafts ---
     .{ "create-draft", draft_tools.handleCreateDraft },
     .{ "send-draft", draft_tools.handleSendDraft },
