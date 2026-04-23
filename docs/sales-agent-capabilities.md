@@ -77,7 +77,7 @@ These are measured on the real tool, not estimated:
 | Thing | Value |
 |---|---|
 | Tools available to the agent | **61** |
-| End-to-end tests passing against live Microsoft Graph | **50 of 51** |
+| End-to-end tests passing against live Microsoft Graph | **51 of 51** |
 | Inbox summary: raw Graph response size | ~20 KB per call |
 | Inbox summary: what the model actually sees after we clean it up | ~2 KB per call |
 | LLM context-window saving on a single `list-emails` call | **90%** |
