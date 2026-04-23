@@ -7,10 +7,31 @@ const json_rpc = @import("../json_rpc.zig");
 const state_mod = @import("../state.zig");
 const tz = @import("../timezone.zig");
 const ToolContext = @import("context.zig").ToolContext;
+const formatter = @import("../formatter.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 const ObjectMap = std.json.ObjectMap;
+
+// Fields surfaced from calendarView (list) and /me/events/{id} (get).
+// start + end in Graph are {dateTime, timeZone} objects — we pull the
+// .dateTime string from each. Location is {displayName}.
+const list_event_fields = [_]formatter.FieldSpec{
+    .{ .path = "subject", .label = "subject" },
+    .{ .path = "start.dateTime", .label = "start" },
+    .{ .path = "end.dateTime", .label = "end" },
+    .{ .path = "location.displayName", .label = "location" },
+    .{ .path = "organizer.emailAddress.name", .label = "organizer" },
+};
+
+const get_event_fields = [_]formatter.FieldSpec{
+    .{ .path = "subject", .label = "subject" },
+    .{ .path = "start.dateTime", .label = "start" },
+    .{ .path = "end.dateTime", .label = "end" },
+    .{ .path = "location.displayName", .label = "location" },
+    .{ .path = "organizer.emailAddress.name", .label = "organizer" },
+    .{ .path = "body.content", .label = "body", .newline_after = true },
+};
 
 /// Convert a JSON array of email strings into a slice of Attendee structs.
 fn parseAttendees(
@@ -64,7 +85,12 @@ pub fn handleGetCalendarEvent(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeObject(ctx.allocator, response, &get_event_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("Event not found.");
+    }
 }
 
 /// Update a calendar event's subject, times, body, or location.
@@ -230,5 +256,10 @@ pub fn handleListCalendarEvents(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &list_event_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No events in that range.");
+    }
 }
