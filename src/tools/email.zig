@@ -5,11 +5,31 @@ const types = @import("../types.zig");
 const graph = @import("../graph.zig");
 const json_rpc = @import("../json_rpc.zig");
 const ToolContext = @import("context.zig").ToolContext;
+const formatter = @import("../formatter.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 const ObjectMap = std.json.ObjectMap;
 const Array = std.json.Array;
+
+// Fields surfaced from /me/messages list + single-message get responses.
+// We show subject + sender + received date + preview, then the formatter
+// automatically appends id: and webUrl: suffixes.
+const list_email_fields = [_]formatter.FieldSpec{
+    .{ .path = "subject", .label = "subject" },
+    .{ .path = "from.emailAddress.address", .label = "from" },
+    .{ .path = "receivedDateTime", .label = "received" },
+    .{ .path = "bodyPreview", .label = "preview", .newline_after = true },
+};
+
+const read_email_fields = [_]formatter.FieldSpec{
+    .{ .path = "subject", .label = "subject" },
+    .{ .path = "from.emailAddress.address", .label = "from" },
+    .{ .path = "receivedDateTime", .label = "received" },
+    // body is an object {contentType, content} — we surface just the content.
+    .{ .path = "body.content", .label = "body", .newline_after = true },
+    .{ .path = "isRead", .label = "isRead" },
+};
 
 /// Convert a JSON array of email strings into a slice of Recipient structs.
 /// Returns null if the key is missing or isn't an array.
@@ -43,16 +63,23 @@ pub fn parseRecipients(
 pub fn handleListEmails(ctx: ToolContext) void {
     const token = ctx.requireAuth() orelse return;
 
+    // $select scopes the columns Graph returns. Combined with the formatter,
+    // this keeps the LLM-facing summary tiny — one line per email.
     const response = graph.get(
         ctx.allocator, ctx.io, token,
-        "/me/messages?$top=10&$select=id,subject,from,receivedDateTime,bodyPreview&$orderby=receivedDateTime%20desc",
+        "/me/messages?$top=10&$select=id,subject,from,receivedDateTime,bodyPreview,webLink&$orderby=receivedDateTime%20desc",
     ) catch {
         ctx.sendResult("Failed to fetch emails.");
         return;
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &list_email_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No emails found.");
+    }
 }
 
 /// Read the full content of a single email by ID.
@@ -63,7 +90,7 @@ pub fn handleReadEmail(ctx: ToolContext) void {
 
     const path = std.fmt.allocPrint(
         ctx.allocator,
-        "/me/messages/{s}?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,isRead",
+        "/me/messages/{s}?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,isRead,webLink",
         .{email_id},
     ) catch return;
     defer ctx.allocator.free(path);
@@ -74,7 +101,12 @@ pub fn handleReadEmail(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeObject(ctx.allocator, response, &read_email_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("Email not found.");
+    }
 }
 
 /// Send an email immediately via Microsoft Graph.
