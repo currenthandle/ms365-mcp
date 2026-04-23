@@ -21,6 +21,7 @@ const scopes =
     "Mail.ReadWrite " ++
     "Mail.Send " ++
     "Calendars.ReadWrite " ++
+    "Calendars.Read.Shared " ++
     "MailboxSettings.ReadWrite " ++
     "Chat.Create " ++
     "Chat.Read " ++

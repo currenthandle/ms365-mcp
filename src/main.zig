@@ -93,6 +93,9 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "create-calendar-event", calendar_tools.handleCreateCalendarEvent },
     .{ "update-calendar-event", calendar_tools.handleUpdateCalendarEvent },
     .{ "delete-calendar-event", calendar_tools.handleDeleteCalendarEvent },
+    .{ "find-meeting-times", calendar_tools.handleFindMeetingTimes },
+    .{ "get-schedule", calendar_tools.handleGetSchedule },
+    .{ "respond-to-event", calendar_tools.handleRespondToEvent },
     // --- Teams channels ---
     .{ "list-teams", channel_tools.handleListTeams },
     .{ "list-channels", channel_tools.handleListChannels },

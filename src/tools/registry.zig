@@ -249,6 +249,29 @@ const cal_list_props = [_]PropSpec{
     .{ .name = "endDateTime", .type = "string", .description = "End of date range in local time, ISO 8601 format (e.g. 2026-02-24T00:00:00)" },
 };
 
+// --- Scheduling props (Phase 6) ---
+
+const find_times_props = [_]PropSpec{
+    .{ .name = "attendees", .type = "array", .description = "Array of required attendee email addresses" },
+    .{ .name = "start", .type = "string", .description = "Earliest acceptable start time, ISO 8601 local time (e.g. 2026-04-23T09:00:00)" },
+    .{ .name = "end", .type = "string", .description = "Latest acceptable end time, ISO 8601 local time" },
+    .{ .name = "durationMinutes", .type = "number", .description = "Optional meeting length in minutes. Default 30." },
+};
+
+const get_schedule_props = [_]PropSpec{
+    .{ .name = "schedules", .type = "array", .description = "Array of email addresses (people, rooms, or equipment) to check" },
+    .{ .name = "start", .type = "string", .description = "Start of the window to query, ISO 8601 local time" },
+    .{ .name = "end", .type = "string", .description = "End of the window to query, ISO 8601 local time" },
+    .{ .name = "availabilityViewInterval", .type = "number", .description = "Minutes per cell in the availabilityView string. Default 60." },
+};
+
+const respond_event_props = [_]PropSpec{
+    .{ .name = "eventId", .type = "string", .description = "The ID of the event to respond to (from list-calendar-events)" },
+    .{ .name = "action", .type = "string", .description = "One of: accept, decline, tentativelyAccept" },
+    .{ .name = "comment", .type = "string", .description = "Optional comment sent with the response" },
+    .{ .name = "sendResponse", .type = "boolean", .description = "Optional — whether to notify the organizer. Default true." },
+};
+
 const send_chat_props = [_]PropSpec{
     .{ .name = "chatId", .type = "string", .description = "The ID of the chat to send the message to" },
     .{ .name = "message", .type = "string", .description = "The message text to send" },
@@ -350,6 +373,24 @@ const all_tools = [_]ToolSpec{
         .description = "Delete a calendar event or meeting by ID.",
         .props = &cal_delete_props,
         .required = &.{"eventId"},
+    },
+    .{
+        .name = "find-meeting-times",
+        .description = "Ask Microsoft Graph to suggest meeting times that work for a set of attendees within a time window. Returns confidence-scored suggestions with start/end datetimes.",
+        .props = &find_times_props,
+        .required = &.{ "attendees", "start", "end" },
+    },
+    .{
+        .name = "get-schedule",
+        .description = "Look up free/busy windows for one or more people, rooms, or equipment. Returns an availabilityView string per schedule where each character maps to one interval: 0=free, 1=tentative, 2=busy, 3=outOfOffice, 4=workingElsewhere.",
+        .props = &get_schedule_props,
+        .required = &.{ "schedules", "start", "end" },
+    },
+    .{
+        .name = "respond-to-event",
+        .description = "Accept, decline, or tentatively accept a meeting invite you've received. Pass the eventId from list-calendar-events and an action of 'accept', 'decline', or 'tentativelyAccept'.",
+        .props = &respond_event_props,
+        .required = &.{ "eventId", "action" },
     },
     // --- Email ---
     .{
