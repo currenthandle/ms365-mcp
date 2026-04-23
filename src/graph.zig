@@ -135,6 +135,60 @@ pub fn getWithPrefer(allocator: Allocator, io: Io, access_token: []const u8, pat
     return mapStatus(allocator, fetched.status, body);
 }
 
+/// Make an authenticated GET request with caller-supplied extra headers.
+///
+/// This generalizes getWithPrefer for endpoints that need something other
+/// than a Prefer header — for example, /me/messages?$search=... requires
+/// `ConsistencyLevel: eventual` or the query fails silently on some fields.
+///
+/// `extra` is a list of Header structs appended to the Authorization header.
+/// The caller owns any allocated header values (name/value slices are just
+/// borrowed for the duration of the call).
+///
+/// Returns the response body as an allocated slice — caller must free it.
+pub fn getWithHeaders(
+    allocator: Allocator,
+    io: Io,
+    access_token: []const u8,
+    path: []const u8,
+    extra: []const std.http.Header,
+) ![]u8 {
+    const url = try std.fmt.allocPrint(allocator, "{s}{s}", .{ base_url, path });
+    defer allocator.free(url);
+
+    const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{access_token});
+    defer allocator.free(auth_header);
+
+    var client: std.http.Client = .{ .allocator = allocator, .io = io };
+    defer client.deinit();
+
+    var response_buf: std.Io.Writer.Allocating = .init(allocator);
+    errdefer response_buf.deinit();
+
+    std.debug.print("ms-mcp: GET {s}\n", .{url});
+
+    // Build a heap-allocated combined header list: Authorization + caller's extras.
+    // std.mem.concat is the Zig equivalent of Python's list +.
+    const headers = try std.mem.concat(allocator, std.http.Header, &.{
+        &[_]std.http.Header{.{ .name = "Authorization", .value = auth_header }},
+        extra,
+    });
+    defer allocator.free(headers);
+
+    const fetched = client.fetch(.{
+        .location = .{ .url = url },
+        .method = .GET,
+        .extra_headers = headers,
+        .response_writer = &response_buf.writer,
+    }) catch {
+        response_buf.deinit();
+        return GraphError.NetworkError;
+    };
+
+    const body = try response_buf.toOwnedSlice();
+    return mapStatus(allocator, fetched.status, body);
+}
+
 /// Make an authenticated PUT request to the Graph API with a raw body.
 ///
 /// Unlike post/patch, this lets the caller specify Content-Type — required for
