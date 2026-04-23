@@ -4,6 +4,7 @@ const std = @import("std");
 const types = @import("../types.zig");
 const graph = @import("../graph.zig");
 const json_rpc = @import("../json_rpc.zig");
+const url_util = @import("../url.zig");
 const ToolContext = @import("context.zig").ToolContext;
 const formatter = @import("../formatter.zig");
 
@@ -29,6 +30,25 @@ const read_email_fields = [_]formatter.FieldSpec{
     // body is an object {contentType, content} — we surface just the content.
     .{ .path = "body.content", .label = "body", .newline_after = true },
     .{ .path = "isRead", .label = "isRead" },
+};
+
+const mail_folder_fields = [_]formatter.FieldSpec{
+    .{ .path = "displayName", .label = "name" },
+    .{ .path = "parentFolderId", .label = "parent" },
+};
+
+const attachment_list_fields = [_]formatter.FieldSpec{
+    .{ .path = "name", .label = "name" },
+    .{ .path = "contentType", .label = "type" },
+    // size is an int — formatter skips non-strings for now, but we leave
+    // the FieldSpec as documentation of what we'd surface.
+    .{ .path = "size", .label = "bytes" },
+};
+
+const attachment_read_fields = [_]formatter.FieldSpec{
+    .{ .path = "name", .label = "name" },
+    .{ .path = "contentType", .label = "type" },
+    .{ .path = "contentBytes", .label = "contentBase64", .newline_after = true },
 };
 
 /// Convert a JSON array of email strings into a slice of Recipient structs.
@@ -164,6 +184,302 @@ pub fn handleDeleteEmail(ctx: ToolContext) void {
     };
 
     ctx.sendResult("Email deleted.");
+}
+
+// --- Reply / Forward helpers ---
+
+/// Build the JSON body for a /reply, /replyAll, or /forward POST.
+/// All three Graph endpoints accept the same shape:
+///   { "comment": "...", "toRecipients": [{"emailAddress":{"address":"..."}}, ...] }
+/// toRecipients is omitted when not provided (reply/replyAll typically omit;
+/// forward requires it).
+///
+/// Returns an allocated JSON string — caller must free.
+fn buildCommentedBody(
+    allocator: Allocator,
+    comment: []const u8,
+    recipients: ?[]const types.SendMailRequest.Message.Recipient,
+) ![]u8 {
+    var body: ObjectMap = .empty;
+    defer body.deinit(allocator);
+
+    try body.put(allocator, "comment", .{ .string = comment });
+
+    if (recipients) |list| {
+        // Array.initCapacity is like Python's list() with a pre-sized backing.
+        var arr = try Array.initCapacity(allocator, list.len);
+        for (list) |r| {
+            var email_obj: ObjectMap = .empty;
+            try email_obj.put(allocator, "address", .{ .string = r.emailAddress.address });
+            var recip_obj: ObjectMap = .empty;
+            try recip_obj.put(allocator, "emailAddress", .{ .object = email_obj });
+            arr.appendAssumeCapacity(.{ .object = recip_obj });
+        }
+        try body.put(allocator, "toRecipients", .{ .array = arr });
+    }
+
+    var json_buf: std.Io.Writer.Allocating = .init(allocator);
+    errdefer json_buf.deinit();
+    try std.json.Stringify.value(Value{ .object = body }, .{}, &json_buf.writer);
+    return json_buf.toOwnedSlice();
+}
+
+/// Shared POST for reply / replyAll / forward.
+/// `action` is one of "reply", "replyAll", "forward" — appended to the URL.
+/// `require_to` fails the request if toRecipients is empty (used by forward).
+fn sendCommentAction(
+    ctx: ToolContext,
+    token: []const u8,
+    email_id: []const u8,
+    action: []const u8,
+    comment: []const u8,
+    recipients: ?[]const types.SendMailRequest.Message.Recipient,
+    require_to: bool,
+    success_msg: []const u8,
+) void {
+    if (require_to) {
+        if (recipients == null or recipients.?.len == 0) {
+            ctx.sendResult("Missing 'to' argument — forward requires at least one recipient.");
+            return;
+        }
+    }
+
+    const body = buildCommentedBody(ctx.allocator, comment, recipients) catch {
+        ctx.sendResult("Failed to build request body.");
+        return;
+    };
+    defer ctx.allocator.free(body);
+
+    const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}/{s}", .{ email_id, action }) catch return;
+    defer ctx.allocator.free(path);
+
+    _ = graph.post(ctx.allocator, ctx.io, token, path, body) catch |err| {
+        ctx.sendGraphError(err);
+        return;
+    };
+
+    ctx.sendResult(success_msg);
+}
+
+/// Reply to an email (only the original sender gets the reply).
+/// Graph: POST /me/messages/{id}/reply with { comment, toRecipients? }
+pub fn handleReplyEmail(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide emailId and comment.") orelse return;
+    const email_id = ctx.getPathArg(args, "emailId", "Missing 'emailId' argument.") orelse return;
+    const comment = ctx.getStringArg(args, "comment", "Missing 'comment' argument (the reply text).") orelse return;
+
+    const extra_to = parseRecipients(ctx.allocator, args, "to") catch return;
+    defer if (extra_to) |r| ctx.allocator.free(r);
+
+    sendCommentAction(ctx, token, email_id, "reply", comment, extra_to, false, "Reply sent.");
+}
+
+/// Reply to everyone on the original email (original sender + all toRecipients
+/// + all ccRecipients).
+/// Graph: POST /me/messages/{id}/replyAll with { comment }
+pub fn handleReplyAllEmail(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide emailId and comment.") orelse return;
+    const email_id = ctx.getPathArg(args, "emailId", "Missing 'emailId' argument.") orelse return;
+    const comment = ctx.getStringArg(args, "comment", "Missing 'comment' argument (the reply text).") orelse return;
+
+    sendCommentAction(ctx, token, email_id, "replyAll", comment, null, false, "Reply-all sent.");
+}
+
+/// Search the user's mailbox for emails matching a keyword.
+/// Graph: GET /me/messages?$search="{q}" with 'ConsistencyLevel: eventual'.
+/// The quoted query syntax and ConsistencyLevel header are both required,
+/// or the query silently drops attributes on certain fields.
+pub fn handleSearchEmails(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide query.") orelse return;
+    const query = ctx.getStringArg(args, "query", "Missing 'query' argument.") orelse return;
+
+    // URL-encode the query for path safety. url.encode handles spaces,
+    // quotes, and other reserved characters per RFC 3986.
+    const encoded = url_util.encode(ctx.allocator, query) catch return;
+    defer ctx.allocator.free(encoded);
+
+    // $search values must be wrapped in %22-escaped double-quotes per the
+    // Graph spec; otherwise multi-word searches fail.
+    const path = std.fmt.allocPrint(
+        ctx.allocator,
+        "/me/messages?$search=%22{s}%22&$top=25&$select=id,subject,from,receivedDateTime,bodyPreview,webLink",
+        .{encoded},
+    ) catch return;
+    defer ctx.allocator.free(path);
+
+    const headers = [_]std.http.Header{
+        .{ .name = "ConsistencyLevel", .value = "eventual" },
+    };
+    const response = graph.getWithHeaders(ctx.allocator, ctx.io, token, path, &headers) catch |err| {
+        ctx.sendGraphError(err);
+        return;
+    };
+    defer ctx.allocator.free(response);
+
+    if (formatter.summarizeArray(ctx.allocator, response, &list_email_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No emails matched that query.");
+    }
+}
+
+/// List the user's mail folders (Inbox, Sent, Drafts, custom folders).
+/// Graph: GET /me/mailFolders. IDs are needed for move-email.
+pub fn handleListMailFolders(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+
+    const response = graph.get(
+        ctx.allocator,
+        ctx.io,
+        token,
+        "/me/mailFolders?$top=50&$select=id,displayName,parentFolderId",
+    ) catch |err| {
+        ctx.sendGraphError(err);
+        return;
+    };
+    defer ctx.allocator.free(response);
+
+    if (formatter.summarizeArray(ctx.allocator, response, &mail_folder_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No mail folders found.");
+    }
+}
+
+/// Forward an email to one or more new recipients.
+/// Graph: POST /me/messages/{id}/forward with { comment, toRecipients }
+pub fn handleForwardEmail(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide emailId, comment, and to.") orelse return;
+    const email_id = ctx.getPathArg(args, "emailId", "Missing 'emailId' argument.") orelse return;
+    const comment = ctx.getStringArg(args, "comment", "Missing 'comment' argument (the forward text).") orelse return;
+
+    const to = parseRecipients(ctx.allocator, args, "to") catch return;
+    defer if (to) |r| ctx.allocator.free(r);
+
+    sendCommentAction(ctx, token, email_id, "forward", comment, to, true, "Forward sent.");
+}
+
+/// List attachments on a received email.
+/// Graph: GET /me/messages/{id}/attachments
+pub fn handleListEmailAttachments(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide emailId.") orelse return;
+    const email_id = ctx.getPathArg(args, "emailId", "Missing 'emailId' argument.") orelse return;
+
+    const path = std.fmt.allocPrint(
+        ctx.allocator,
+        "/me/messages/{s}/attachments?$select=id,name,contentType,size",
+        .{email_id},
+    ) catch return;
+    defer ctx.allocator.free(path);
+
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
+        return;
+    };
+    defer ctx.allocator.free(response);
+
+    if (formatter.summarizeArray(ctx.allocator, response, &attachment_list_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No attachments on this email.");
+    }
+}
+
+/// Fetch a single attachment's metadata + base64-encoded bytes.
+/// Graph: GET /me/messages/{id}/attachments/{aid}
+/// For text attachments (small notes, JSON, markdown), base64 is decodable
+/// by the LLM client. Binary attachments (PDFs, images) will be moved to
+/// a binary-safe temp-file download in Phase 5 — this tool is for text.
+pub fn handleReadEmailAttachment(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide emailId and attachmentId.") orelse return;
+    const email_id = ctx.getPathArg(args, "emailId", "Missing 'emailId' argument.") orelse return;
+    const attach_id = ctx.getPathArg(args, "attachmentId", "Missing 'attachmentId' argument.") orelse return;
+
+    const path = std.fmt.allocPrint(
+        ctx.allocator,
+        "/me/messages/{s}/attachments/{s}",
+        .{ email_id, attach_id },
+    ) catch return;
+    defer ctx.allocator.free(path);
+
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
+        return;
+    };
+    defer ctx.allocator.free(response);
+
+    if (formatter.summarizeObject(ctx.allocator, response, &attachment_read_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("Attachment not found.");
+    }
+}
+
+/// Mark an email read or unread by flipping its isRead boolean.
+/// Graph: PATCH /me/messages/{id} with { "isRead": bool }
+pub fn handleMarkReadEmail(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide emailId.") orelse return;
+    const email_id = ctx.getPathArg(args, "emailId", "Missing 'emailId' argument.") orelse return;
+
+    // isRead defaults to true ("mark this as read"). args.get returns ?Value;
+    // we pattern-match to pull out the bool, defaulting on anything else.
+    const is_read: bool = if (args.get("isRead")) |v| switch (v) {
+        .bool => |b| b,
+        else => true,
+    } else true;
+
+    const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}", .{email_id}) catch return;
+    defer ctx.allocator.free(path);
+
+    // Tiny fixed-body PATCH — no JSON builder needed.
+    const body = if (is_read) "{\"isRead\":true}" else "{\"isRead\":false}";
+
+    _ = graph.patch(ctx.allocator, ctx.io, token, path, body) catch |err| {
+        ctx.sendGraphError(err);
+        return;
+    };
+
+    ctx.sendResult(if (is_read) "Email marked read." else "Email marked unread.");
+}
+
+/// Move an email to a different mail folder.
+/// Graph: POST /me/messages/{id}/move with { "destinationId": "..." }
+/// destinationId is a folder ID (from list-mail-folders), NOT a folder name.
+pub fn handleMoveEmail(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide emailId and destinationId.") orelse return;
+    const email_id = ctx.getPathArg(args, "emailId", "Missing 'emailId' argument.") orelse return;
+    const dest = ctx.getStringArg(args, "destinationId", "Missing 'destinationId' argument (folder ID from list-mail-folders).") orelse return;
+
+    // Build the tiny body with std.json so we properly escape the folder ID.
+    var body: ObjectMap = .empty;
+    defer body.deinit(ctx.allocator);
+    body.put(ctx.allocator, "destinationId", .{ .string = dest }) catch return;
+
+    var json_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
+    defer json_buf.deinit();
+    std.json.Stringify.value(Value{ .object = body }, .{}, &json_buf.writer) catch return;
+
+    const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}/move", .{email_id}) catch return;
+    defer ctx.allocator.free(path);
+
+    _ = graph.post(ctx.allocator, ctx.io, token, path, json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
+        return;
+    };
+
+    ctx.sendResult("Email moved.");
 }
 
 // --- Tests ---
