@@ -238,7 +238,7 @@ pub fn handleDeleteChannelMessage(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/softDelete", .{ ch.team_id, ch.channel_id, message_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, "{}") catch |err| {
+    graph.postNoContent(ctx.allocator, ctx.io, ch.token, path, "{}") catch |err| {
         ctx.sendGraphError(err);
         return;
     };
@@ -255,7 +255,7 @@ pub fn handleDeleteChannelReply(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/replies/{s}/softDelete", .{ ch.team_id, ch.channel_id, message_id, reply_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, "{}") catch |err| {
+    graph.postNoContent(ctx.allocator, ctx.io, ch.token, path, "{}") catch |err| {
         ctx.sendGraphError(err);
         return;
     };

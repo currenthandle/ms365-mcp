@@ -218,7 +218,7 @@ pub fn handleDeleteChatMessage(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/chats/{s}/messages/{s}/softDelete", .{ chat_id, message_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch |err| {
+    graph.postNoContent(ctx.allocator, ctx.io, token, path, "{}") catch |err| {
         ctx.sendGraphError(err);
         return;
     };
