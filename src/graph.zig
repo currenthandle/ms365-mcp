@@ -346,6 +346,53 @@ pub fn delete(allocator: Allocator, io: Io, access_token: []const u8, path: []co
     };
 }
 
+/// Make an authenticated POST request that returns 204 No Content.
+///
+/// The Graph softDelete endpoints (chat/channel messages) return 204 with no
+/// body. Using the regular post() function leaves the response_writer waiting
+/// for data that never arrives on a keep-alive connection, which hangs and
+/// eventually crashes the MCP process. This variant sends keep_alive=false and
+/// omits the response_writer so it returns as soon as the status line arrives.
+///
+/// `json_body` is the POST body — pass "{}" for softDelete which expects an
+/// empty JSON object.
+pub fn postNoContent(allocator: Allocator, io: Io, access_token: []const u8, path: []const u8, json_body: []const u8) !void {
+    const url = try std.fmt.allocPrint(allocator, "{s}{s}", .{ base_url, path });
+    defer allocator.free(url);
+
+    std.debug.print("ms-mcp: POST (no-content) {s}\n", .{url});
+
+    const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{access_token});
+    defer allocator.free(auth_header);
+
+    var client: std.http.Client = .{ .allocator = allocator, .io = io };
+    defer client.deinit();
+
+    const fetched = client.fetch(.{
+        .location = .{ .url = url },
+        .method = .POST,
+        .payload = json_body,
+        .keep_alive = false,
+        .extra_headers = &[_]std.http.Header{
+            .{ .name = "Authorization", .value = auth_header },
+            .{ .name = "Content-Type", .value = "application/json" },
+        },
+    }) catch return GraphError.NetworkError;
+
+    const code: u16 = @intFromEnum(fetched.status);
+    if (code >= 200 and code < 300) return;
+    return switch (code) {
+        400 => GraphError.BadRequest,
+        401 => GraphError.Unauthorized,
+        403 => GraphError.Forbidden,
+        404 => GraphError.NotFound,
+        409 => GraphError.Conflict,
+        429 => GraphError.Throttled,
+        500...599 => GraphError.ServerError,
+        else => GraphError.BadRequest,
+    };
+}
+
 /// Internal: shared logic for all Graph API requests.
 /// Builds the URL, sets up auth headers, sends the request, inspects
 /// the response status. On 2xx returns the body; on 4xx/5xx returns the
