@@ -149,11 +149,17 @@ pub fn handleSendEmail(ctx: ToolContext) void {
     const subject = ctx.getStringArg(args, "subject", "Missing 'subject' argument.") orelse return;
     const body_text = ctx.getStringArg(args, "body", "Missing 'body' argument.") orelse return;
 
-    // Serialize the request struct to JSON.
+    // format=html sends the body with contentType=HTML and trusts the caller's
+    // markup. format=text (default) sends contentType=Text and Outlook renders
+    // it exactly as plain text — no escaping pass needed.
+    const format = json_rpc.getStringArg(args, "format") orelse "text";
+    const is_html = std.mem.eql(u8, format, "html");
+    const content_type: []const u8 = if (is_html) "HTML" else "Text";
+
     const mail_request = types.SendMailRequest{
         .message = .{
             .subject = subject,
-            .body = .{ .content = body_text },
+            .body = .{ .contentType = content_type, .content = body_text },
             .toRecipients = to,
             .ccRecipients = cc,
             .bccRecipients = bcc,

@@ -54,12 +54,24 @@ const channel_id_prop = PropSpec{
 // --- Per-tool input specs ---
 // Ordered to match the tools array below so the file reads top-down.
 
+// Shared format selector used by every tool that writes a message body.
+// Default 'text' runs the message through a safe HTML-escape + URL
+// auto-link pass. 'html' trusts the caller's markup verbatim — use it
+// when the agent is producing deliberate HTML (bold, hyperlinks,
+// line breaks) that would otherwise be escaped.
+const format_prop = PropSpec{
+    .name = "format",
+    .type = "string",
+    .description = "Optional message format: 'text' (default; HTML-escaped, URLs auto-linked) or 'html' (caller-supplied HTML rendered verbatim — use for bold, links, line breaks).",
+};
+
 const send_email_props = [_]PropSpec{
     .{ .name = "to", .type = "array", .description = "Array of recipient email addresses" },
     .{ .name = "subject", .type = "string", .description = "Email subject line" },
     .{ .name = "body", .type = "string", .description = "Email body text" },
     .{ .name = "cc", .type = "array", .description = "Optional array of CC email addresses" },
     .{ .name = "bcc", .type = "array", .description = "Optional array of BCC email addresses" },
+    format_prop,
 };
 
 const read_email_props = [_]PropSpec{
@@ -189,6 +201,7 @@ const post_chan_props = [_]PropSpec{
     .{ .name = "message", .type = "string", .description = "The message text to post. Use @Name for mentions (requires mentions parameter)." },
     .{ .name = "subject", .type = "string", .description = "Optional subject/title for the channel post" },
     .{ .name = "mentions", .type = "string", .description = mentions_desc },
+    format_prop,
 };
 
 const chan_reply_props = [_]PropSpec{
@@ -197,6 +210,7 @@ const chan_reply_props = [_]PropSpec{
     .{ .name = "messageId", .type = "string", .description = "The ID of the top-level message/post to reply to (from list-channel-messages)" },
     .{ .name = "message", .type = "string", .description = "The reply text with @Name for each person to mention (e.g. 'Hey @Rohit check this out')" },
     .{ .name = "mentions", .type = "string", .description = mentions_desc },
+    format_prop,
 };
 
 const delete_chat_msg_props = [_]PropSpec{
@@ -275,6 +289,7 @@ const respond_event_props = [_]PropSpec{
 const send_chat_props = [_]PropSpec{
     .{ .name = "chatId", .type = "string", .description = "The ID of the chat to send the message to" },
     .{ .name = "message", .type = "string", .description = "The message text to send" },
+    format_prop,
 };
 
 // --- SharePoint props ---

@@ -170,10 +170,15 @@ pub fn handlePostChannelMessage(ctx: ToolContext) void {
     if (mentions_str) |mentions_raw| {
         buildMentionedMessage(ctx.allocator, w, message, mentions_raw, subject);
     } else {
-        const html_content = types.htmlAutoLink(ctx.allocator, message) orelse message;
-        defer if (html_content.ptr != message.ptr) ctx.allocator.free(html_content);
+        // format=html trusts caller-supplied HTML as-is. format=text
+        // (default) HTML-escapes + auto-links URLs + converts \n to <br>.
+        const format = json_rpc.getStringArg(ch.args, "format") orelse "text";
+        const is_html = std.mem.eql(u8, format, "html");
+        const content = if (is_html) message else (types.htmlAutoLink(ctx.allocator, message) orelse message);
+        defer if (!is_html and content.ptr != message.ptr) ctx.allocator.free(content);
+
         w.writeAll("{\"body\":{\"contentType\":\"html\",\"content\":") catch return;
-        std.json.Stringify.encodeJsonString(html_content, .{}, w) catch return;
+        std.json.Stringify.encodeJsonString(content, .{}, w) catch return;
         w.writeAll("}") catch return;
         if (subject) |subj| {
             w.writeAll(",\"subject\":") catch return;
@@ -208,10 +213,12 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
     if (mentions_str) |mentions_raw| {
         buildMentionedMessage(ctx.allocator, w, message, mentions_raw, null);
     } else {
-        // No mentions — send as HTML with auto-linked URLs.
-        const html_content = types.htmlAutoLink(ctx.allocator, message) orelse message;
-        defer if (html_content.ptr != message.ptr) ctx.allocator.free(html_content);
-        const body = types.ChatMessageRequest{ .body = .{ .content = html_content } };
+        // format=html trusts the caller's HTML; text (default) auto-escapes + links.
+        const format = json_rpc.getStringArg(ch.args, "format") orelse "text";
+        const is_html = std.mem.eql(u8, format, "html");
+        const content = if (is_html) message else (types.htmlAutoLink(ctx.allocator, message) orelse message);
+        defer if (!is_html and content.ptr != message.ptr) ctx.allocator.free(content);
+        const body = types.ChatMessageRequest{ .body = .{ .content = content } };
         std.json.Stringify.value(body, .{}, w) catch return;
     }
 

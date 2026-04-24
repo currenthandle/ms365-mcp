@@ -154,11 +154,17 @@ pub fn handleSendChatMessage(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/chats/{s}/messages", .{chat_id}) catch return;
     defer ctx.allocator.free(path);
 
-    // Send as HTML so URLs become clickable hyperlinks.
-    const html_content = types.htmlAutoLink(ctx.allocator, message) orelse message;
-    defer if (html_content.ptr != message.ptr) ctx.allocator.free(html_content);
+    // format=html trusts the caller's HTML as-is (clickable links, bold,
+    // line breaks, etc.). format=text (default) runs htmlAutoLink which
+    // HTML-escapes angle brackets + ampersands + quotes, wraps bare URLs
+    // in <a> tags, and converts \n to <br>.
+    const format = json_rpc.getStringArg(args, "format") orelse "text";
+    const is_html = std.mem.eql(u8, format, "html");
 
-    const chat_msg = types.ChatMessageRequest{ .body = .{ .content = html_content } };
+    const content = if (is_html) message else (types.htmlAutoLink(ctx.allocator, message) orelse message);
+    defer if (!is_html and content.ptr != message.ptr) ctx.allocator.free(content);
+
+    const chat_msg = types.ChatMessageRequest{ .body = .{ .content = content } };
     var json_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
     defer json_buf.deinit();
     std.json.Stringify.value(chat_msg, .{}, &json_buf.writer) catch return;
