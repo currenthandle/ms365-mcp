@@ -188,7 +188,12 @@ pub fn handleCreateChat(ctx: ToolContext) void {
     , .{ member1, member2 }) catch return;
     defer ctx.allocator.free(json_body);
 
-    const response = graph.post(ctx.allocator, ctx.io, token, "/me/chats", json_body) catch |err| {
+    // /chats (application-scope URL), NOT /me/chats. On some tenants
+    // POST /me/chats returns a bare 400 "UnknownError" with no message,
+    // while POST /chats with identical body succeeds. Delegated token
+    // carries the caller's identity either way — /me/ prefix isn't
+    // needed for chat creation and actively breaks on this tenant.
+    const response = graph.post(ctx.allocator, ctx.io, token, "/chats", json_body) catch |err| {
         ctx.sendGraphError(err);
         return;
     };
