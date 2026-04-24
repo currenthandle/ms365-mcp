@@ -12,6 +12,7 @@ const runner = @import("runner.zig");
 const McpClient = client_mod.McpClient;
 const pass = runner.pass;
 const fail = runner.fail;
+const skip = runner.skip;
 
 const Allocator = std.mem.Allocator;
 
@@ -240,10 +241,7 @@ pub fn testCalendarLifecycle(client: *McpClient) !void {
 
 /// Test: Send email lifecycle — send to self, find it, read it, delete it.
 pub fn testSendEmailLifecycle(client: *McpClient) !void {
-    const test_email = if (std.c.getenv("E2E_TEST_EMAIL")) |ptr| std.mem.span(ptr) else {
-        std.debug.print("  ⓘ Skipping send-email (E2E_TEST_EMAIL not set)\n", .{});
-        return;
-    };
+    const test_email = std.mem.span(std.c.getenv("E2E_TEST_EMAIL").?);
 
     var args_buf: [2048]u8 = undefined;
     const args = std.fmt.bufPrint(&args_buf, "{{\"to\":[\"{s}\"],\"cc\":[\"{s}\"],\"bcc\":[\"{s}\"],\"subject\":\"[DISREGARD AUTOMATED TEST EMAIL]\",\"body\":\"This email was sent by the e2e test suite.\"}}", .{ test_email, test_email, test_email }) catch {
@@ -264,27 +262,26 @@ pub fn testSendEmailLifecycle(client: *McpClient) !void {
         return;
     }
 
-    // Wait a moment for the email to arrive, then find and delete it.
-    // Wait a few seconds for the email to arrive in our inbox.
-    _ = std.c.nanosleep(&.{ .sec = 3, .nsec = 0 }, null);
-
-    const list = try client.callTool("list-emails", null);
-    defer list.deinit();
-    const list_text = McpClient.getResultText(list) orelse {
-        fail("send-email cleanup", "could not list emails");
+    // Poll for the email to arrive — up to 30s. Self-sent email routinely
+    // takes 5-15s through Exchange's routing even for a same-box delivery.
+    var email_id: ?[]u8 = null;
+    var poll_attempts: usize = 0;
+    while (poll_attempts < 10 and email_id == null) : (poll_attempts += 1) {
+        _ = std.c.nanosleep(&.{ .sec = 3, .nsec = 0 }, null);
+        const list = try client.callTool("list-emails", null);
+        defer list.deinit();
+        const list_text = McpClient.getResultText(list) orelse continue;
+        email_id = helpers.findEmailBySubject(client.allocator, list_text, "DISREGARD AUTOMATED TEST EMAIL");
+    }
+    const email_id_found = email_id orelse {
+        fail("send-email cleanup", "test email never arrived in inbox after 30s");
         return;
     };
-
-    // Find the test email ID by parsing the list response.
-    const email_id = helpers.findEmailBySubject(client.allocator, list_text, "DISREGARD AUTOMATED TEST EMAIL") orelse {
-        std.debug.print("  ⓘ Could not find test email to delete (may need manual cleanup)\n", .{});
-        return;
-    };
-    defer client.allocator.free(email_id);
+    defer client.allocator.free(email_id_found);
 
     // Read the email to verify it.
     var read_buf: [512]u8 = undefined;
-    const read_args = std.fmt.bufPrint(&read_buf, "{{\"emailId\":\"{s}\"}}", .{email_id}) catch return;
+    const read_args = std.fmt.bufPrint(&read_buf, "{{\"emailId\":\"{s}\"}}", .{email_id_found}) catch return;
     const read = try client.callTool("read-email", read_args);
     defer read.deinit();
     const read_text = McpClient.getResultText(read) orelse {
@@ -299,7 +296,7 @@ pub fn testSendEmailLifecycle(client: *McpClient) !void {
 
     // Delete it.
     var del_buf: [512]u8 = undefined;
-    const del_args = std.fmt.bufPrint(&del_buf, "{{\"emailId\":\"{s}\"}}", .{email_id}) catch return;
+    const del_args = std.fmt.bufPrint(&del_buf, "{{\"emailId\":\"{s}\"}}", .{email_id_found}) catch return;
     const del = try client.callTool("delete-email", del_args);
     defer del.deinit();
     const del_text = McpClient.getResultText(del) orelse {
@@ -430,14 +427,8 @@ pub fn testAttachmentLifecycle(client: *McpClient) !void {
 
 /// Test: Calendar event with attendees — create, verify attendees, delete.
 pub fn testCalendarWithAttendees(client: *McpClient) !void {
-    const required_attendee = if (std.c.getenv("E2E_ATTENDEE_REQUIRED")) |ptr| std.mem.span(ptr) else {
-        std.debug.print("  ⓘ Skipping calendar-with-attendees (E2E_ATTENDEE_REQUIRED not set)\n", .{});
-        return;
-    };
-    const optional_attendee = if (std.c.getenv("E2E_ATTENDEE_OPTIONAL")) |ptr| std.mem.span(ptr) else {
-        std.debug.print("  ⓘ Skipping calendar-with-attendees (E2E_ATTENDEE_OPTIONAL not set)\n", .{});
-        return;
-    };
+    const required_attendee = std.mem.span(std.c.getenv("E2E_ATTENDEE_REQUIRED").?);
+    const optional_attendee = std.mem.span(std.c.getenv("E2E_ATTENDEE_OPTIONAL").?);
 
     var args_buf: [2048]u8 = undefined;
     const args = std.fmt.bufPrint(&args_buf, "{{\"subject\":\"[DISREGARD AUTOMATED TEST CAL]\",\"startDateTime\":\"2099-06-15T10:00:00\",\"endDateTime\":\"2099-06-15T11:00:00\",\"attendees\":[\"{s}\"],\"optionalAttendees\":[\"{s}\"]}}", .{ required_attendee, optional_attendee }) catch {
@@ -487,11 +478,7 @@ pub fn testCalendarWithAttendees(client: *McpClient) !void {
 
 /// Test: Chat message lifecycle — send message, verify, soft-delete.
 pub fn testChatMessageLifecycle(client: *McpClient) !void {
-    // Get the test recipient email from env.
-    const chat_recipient = if (std.c.getenv("E2E_ATTENDEE_REQUIRED")) |ptr| std.mem.span(ptr) else {
-        std.debug.print("  ⓘ Skipping chat-message (E2E_ATTENDEE_REQUIRED not set)\n", .{});
-        return;
-    };
+    const chat_recipient = std.mem.span(std.c.getenv("E2E_ATTENDEE_REQUIRED").?);
 
     // Get the logged-in user's email from their profile.
     const profile = try client.callTool("get-profile", null);
@@ -523,9 +510,8 @@ pub fn testChatMessageLifecycle(client: *McpClient) !void {
     // Extract the chat ID from the response.
     // If create-chat fails (e.g. tenant policy), fall back to searching existing chats.
     const chat_id = helpers.extractJsonString(client.allocator, create_chat_text, "id") orelse blk: {
-        std.debug.print("  ⓘ create-chat failed, searching existing chats for recipient\n", .{});
-
-        // List chats and find a 1:1 chat containing the recipient's email.
+        // create-chat failed — fall back to listing + finding an existing chat.
+        // The test still runs; we just skip the "create" half of the journey.
         const list = try client.callTool("list-chats", "{\"top\":\"50\"}");
         defer list.deinit();
         const list_text = McpClient.getResultText(list) orelse {
@@ -533,13 +519,11 @@ pub fn testChatMessageLifecycle(client: *McpClient) !void {
             return;
         };
 
-        // Extract the recipient's name prefix from email (e.g. "ishaan.gupta" → "Ishaan").
         const dot_idx = std.mem.indexOfScalar(u8, chat_recipient, '.') orelse chat_recipient.len;
         const first_name = chat_recipient[0..dot_idx];
 
-        // Search for a oneOnOne chat with a member matching the name.
         break :blk helpers.findChatByMember(client.allocator, list_text, first_name) orelse {
-            std.debug.print("  ⓘ Could not find existing chat with '{s}' — skipping\n", .{chat_recipient});
+            skip("chat lifecycle", "create-chat failed and no existing 1:1 chat with recipient");
             return;
         };
     };
@@ -574,15 +558,49 @@ pub fn testChatMessageLifecycle(client: *McpClient) !void {
 
     // Find our test message ID.
     const msg_id = helpers.findMessageByContent(client.allocator, msgs_text, "DISREGARD AUTOMATED TEST MSG") orelse {
-        std.debug.print("  ⓘ Could not find test message to delete\n", .{});
+        fail("delete-chat-message setup", "sent message was not visible in list-chat-messages");
         return;
     };
     defer client.allocator.free(msg_id);
 
-    // TODO: Soft-delete chat messages causes a connection reset from Microsoft.
-    // Likely a permissions issue (may need ChatMessage.ReadWrite or /users/{id}/
-    // path instead of /me/). Skipping deletion for now — the test message remains.
-    std.debug.print("  ⓘ Skipping delete-chat-message (known issue: Graph API rejects softDelete)\n", .{});
+    // Actually delete the message. This used to hang the MCP process
+    // because graph.post() waited on a response body that the softDelete
+    // endpoint never sends (it returns 204). graph.postNoContent fixes
+    // that — if the server now hangs or crashes here, the client timeout
+    // will surface it as a test failure instead of wedging the run.
+    var del_buf: [1024]u8 = undefined;
+    const del_args = std.fmt.bufPrint(&del_buf, "{{\"chatId\":\"{s}\",\"messageId\":\"{s}\"}}", .{ chat_id, msg_id }) catch return;
+    const del = try client.callTool("delete-chat-message", del_args);
+    defer del.deinit();
+    const del_text = McpClient.getResultText(del) orelse {
+        fail("delete-chat-message", "no text in response");
+        return;
+    };
+    if (std.mem.indexOf(u8, del_text, "deleted") == null) {
+        fail("delete-chat-message", del_text);
+        return;
+    }
+    pass("delete-chat-message");
+
+    // Verify softDelete took effect. Teams keeps the message row but
+    // empties its body; the fragment should no longer appear. Poll for
+    // up to 5s since the index can lag a beat behind the write.
+    var verified = false;
+    var verify_attempts: usize = 0;
+    while (verify_attempts < 5 and !verified) : (verify_attempts += 1) {
+        _ = std.c.nanosleep(&.{ .sec = 1, .nsec = 0 }, null);
+        const msgs2 = try client.callTool("list-chat-messages", msgs_args);
+        defer msgs2.deinit();
+        const msgs2_text = McpClient.getResultText(msgs2) orelse continue;
+        if (std.mem.indexOf(u8, msgs2_text, "DISREGARD AUTOMATED TEST MSG") == null) {
+            verified = true;
+        }
+    }
+    if (verified) {
+        pass("delete-chat-message verified gone");
+    } else {
+        fail("delete-chat-message verify", "deleted message still visible in list after 5s");
+    }
 }
 
 /// Test: Calendar list and update lifecycle — create, list to find it, update, verify, delete.
@@ -646,10 +664,7 @@ pub fn testCalendarListAndUpdate(client: *McpClient) !void {
 
 /// Test: Draft send lifecycle — create draft, send it.
 pub fn testSendDraftLifecycle(client: *McpClient) !void {
-    const test_email = if (std.c.getenv("E2E_TEST_EMAIL")) |ptr| std.mem.span(ptr) else {
-        std.debug.print("  ⓘ Skipping send-draft (E2E_TEST_EMAIL not set)\n", .{});
-        return;
-    };
+    const test_email = std.mem.span(std.c.getenv("E2E_TEST_EMAIL").?);
 
     var create_buf: [1024]u8 = undefined;
     const create_args = std.fmt.bufPrint(&create_buf, "{{\"to\":[\"{s}\"],\"subject\":\"[DISREGARD AUTOMATED TEST SEND-DRAFT]\",\"body\":\"This draft will be sent by the e2e test.\"}}", .{test_email}) catch return;
@@ -823,8 +838,8 @@ pub fn testChannelLifecycle(client: *McpClient) !void {
     };
 
     // Extract the first team ID from the condensed format: "— id: <teamId>"
-    const team_id = helpers.extractAfterMarker(client.allocator, teams_text, "— id: ") orelse {
-        std.debug.print("  ⓘ No teams found — skipping channel tests\n", .{});
+    const team_id = helpers.extractFirstValueField(client.allocator, teams_text, "id") orelse {
+        fail("channel lifecycle", "list-teams returned no teams — test account needs at least one team");
         return;
     };
     defer client.allocator.free(team_id);
@@ -846,8 +861,8 @@ pub fn testChannelLifecycle(client: *McpClient) !void {
     }
 
     // Extract first channel ID.
-    const channel_id = helpers.extractAfterMarker(client.allocator, channels_text, "— id: ") orelse {
-        std.debug.print("  ⓘ No channels found — skipping message tests\n", .{});
+    const channel_id = helpers.extractFirstValueField(client.allocator, channels_text, "id") orelse {
+        fail("channel lifecycle", "team has no channels — every team must have at least General");
         return;
     };
     defer client.allocator.free(channel_id);
@@ -872,7 +887,7 @@ pub fn testChannelLifecycle(client: *McpClient) !void {
 
     // Find a message ID for getting replies.
     const msg_id = helpers.extractFirstMessageId(client.allocator, msgs_text) orelse {
-        std.debug.print("  ⓘ No messages in channel — skipping replies test\n", .{});
+        skip("get-channel-message-replies", "no messages in channel — test post not implemented yet");
         return;
     };
     defer client.allocator.free(msg_id);
@@ -900,9 +915,12 @@ pub fn testReplyToChannelMessage(client: *McpClient) !void {
     // List teams.
     const teams = try client.callTool("list-teams", null);
     defer teams.deinit();
-    const teams_text = McpClient.getResultText(teams) orelse return;
-    const team_id = helpers.extractAfterMarker(client.allocator, teams_text, "— id: ") orelse {
-        std.debug.print("  ⓘ No teams — skipping reply test\n", .{});
+    const teams_text = McpClient.getResultText(teams) orelse {
+        fail("reply-to-channel-message setup", "list-teams returned no text");
+        return;
+    };
+    const team_id = helpers.extractFirstValueField(client.allocator, teams_text, "id") orelse {
+        fail("reply-to-channel-message setup", "no teams");
         return;
     };
     defer client.allocator.free(team_id);
@@ -915,8 +933,8 @@ pub fn testReplyToChannelMessage(client: *McpClient) !void {
     const channels_text = McpClient.getResultText(channels) orelse return;
 
     // Find "General" channel or use first channel.
-    const channel_id = helpers.extractAfterMarker(client.allocator, channels_text, "— id: ") orelse {
-        std.debug.print("  ⓘ No channels — skipping reply test\n", .{});
+    const channel_id = helpers.extractFirstValueField(client.allocator, channels_text, "id") orelse {
+        fail("reply-to-channel-message setup", "no channels in team");
         return;
     };
     defer client.allocator.free(channel_id);
@@ -928,7 +946,7 @@ pub fn testReplyToChannelMessage(client: *McpClient) !void {
     defer msgs.deinit();
     const msgs_text = McpClient.getResultText(msgs) orelse return;
     const msg_id = helpers.extractFirstMessageId(client.allocator, msgs_text) orelse {
-        std.debug.print("  ⓘ No messages — skipping reply test\n", .{});
+        skip("reply-to-channel-message", "no messages in channel to reply to");
         return;
     };
     defer client.allocator.free(msg_id);
@@ -1052,10 +1070,7 @@ pub fn testSearchUsers(client: *McpClient) !void {
 /// Requires `E2E_SHAREPOINT_SITE_NAME` env var (a keyword that matches at
 /// least one site the logged-in user can access). Skipped if unset.
 pub fn testSharePointLifecycle(client: *McpClient) !void {
-    const site_query = if (std.c.getenv("E2E_SHAREPOINT_SITE_NAME")) |ptr| std.mem.span(ptr) else {
-        std.debug.print("  ⓘ Skipping sharepoint lifecycle (E2E_SHAREPOINT_SITE_NAME not set)\n", .{});
-        return;
-    };
+    const site_query = std.mem.span(std.c.getenv("E2E_SHAREPOINT_SITE_NAME").?);
 
     // --- Find a site ---
     var search_buf: [512]u8 = undefined;
@@ -1067,7 +1082,7 @@ pub fn testSharePointLifecycle(client: *McpClient) !void {
         return;
     };
     const site_id = helpers.extractFirstValueField(client.allocator, search_text, "id") orelse {
-        std.debug.print("  ⓘ No SharePoint site matched query '{s}' — skipping rest of lifecycle\n", .{site_query});
+        fail("search-sharepoint-sites", "no site matched E2E_SHAREPOINT_SITE_NAME — check the .env value");
         return;
     };
     defer client.allocator.free(site_id);
@@ -1151,10 +1166,17 @@ pub fn testSharePointLifecycle(client: *McpClient) !void {
         fail("download-sharepoint-file", "no text");
         return;
     };
-    if (std.mem.indexOf(u8, dl_text, "ms-mcp e2e suite") != null) {
+    // download-sharepoint-file writes bytes to a temp path and returns
+    // metadata. Read the temp file back and check the bytes.
+    const dl_bytes = helpers.readDownloadedFile(client.allocator, client.io, dl_text) orelse {
+        fail("download-sharepoint-file", "could not read the downloaded file from its local_path");
+        return;
+    };
+    defer client.allocator.free(dl_bytes);
+    if (std.mem.indexOf(u8, dl_bytes, "ms-mcp e2e suite") != null) {
         pass("download-sharepoint-file (verified content)");
     } else {
-        fail("download-sharepoint-file", "content mismatch");
+        fail("download-sharepoint-file", "downloaded bytes did not match uploaded content");
     }
 
     // --- Delete the file ---
@@ -1240,10 +1262,15 @@ pub fn testSharePointFileUpload(client: *McpClient) !void {
         fail("download-sharepoint-file (from disk)", "no text");
         return;
     };
-    if (std.mem.indexOf(u8, dl_text, "pub fn build") != null) {
+    const dl_bytes = helpers.readDownloadedFile(client.allocator, client.io, dl_text) orelse {
+        fail("download-sharepoint-file (from disk)", "could not read the downloaded file from its local_path");
+        return;
+    };
+    defer client.allocator.free(dl_bytes);
+    if (std.mem.indexOf(u8, dl_bytes, "pub fn build") != null) {
         pass("download-sharepoint-file (verified disk upload bytes)");
     } else {
-        fail("download-sharepoint-file (from disk)", "build.zig content not found in download");
+        fail("download-sharepoint-file (from disk)", "build.zig content not found in downloaded bytes");
     }
 
     // Cleanup.
@@ -1382,10 +1409,15 @@ pub fn testSharePointItemIdTargeting(client: *McpClient) !void {
         fail("download-sharepoint-file (by itemId)", "no text");
         return;
     };
-    if (std.mem.indexOf(u8, dl_text, marker) != null) {
+    const dl_bytes = helpers.readDownloadedFile(client.allocator, client.io, dl_text) orelse {
+        fail("download-sharepoint-file (by itemId)", "could not read the downloaded file from its local_path");
+        return;
+    };
+    defer client.allocator.free(dl_bytes);
+    if (std.mem.indexOf(u8, dl_bytes, marker) != null) {
         pass("download-sharepoint-file (by itemId)");
     } else {
-        fail("download-sharepoint-file (by itemId)", "marker not in response");
+        fail("download-sharepoint-file (by itemId)", "marker not in downloaded bytes");
     }
 
     // Delete by itemId.
@@ -1466,11 +1498,11 @@ fn deleteEmailById(client: *McpClient, email_id: []const u8) void {
 /// bogus emailId to verify the tool handles errors correctly (still
 /// doesn't send anything on 404).
 pub fn testEmailReplyLifecycle(client: *McpClient) !void {
-    if (std.c.getenv("E2E_EMAIL_SIDE_EFFECTS") == null) {
-        std.debug.print("  ⓘ Skipping reply-email (would email a real sender; set E2E_EMAIL_SIDE_EFFECTS=1 to run error path)\n", .{});
-        return;
-    }
     // Error-path test: bogus emailId → Graph 400/404 → typed error surfaced.
+    // We always run this — it proves the URL/body shape without sending
+    // mail. The real happy-path send is covered by testSendEmailLifecycle
+    // which emails the user themselves.
+    _ = std.c.getenv("E2E_EMAIL_SIDE_EFFECTS"); // reserved for a future real-send variant
     const reply = try client.callTool("reply-email", "{\"emailId\":\"BOGUS\",\"comment\":\"x\"}");
     defer reply.deinit();
     const text = McpClient.getResultText(reply) orelse {
@@ -1487,10 +1519,9 @@ pub fn testEmailReplyLifecycle(client: *McpClient) !void {
 /// Test: forward-email — same side-effects concern as reply. Runs error
 /// path only unless E2E_EMAIL_SIDE_EFFECTS=1.
 pub fn testEmailForwardLifecycle(client: *McpClient) !void {
-    if (std.c.getenv("E2E_EMAIL_SIDE_EFFECTS") == null) {
-        std.debug.print("  ⓘ Skipping forward-email (would email a real recipient; set E2E_EMAIL_SIDE_EFFECTS=1 to run error path)\n", .{});
-        return;
-    }
+    // Error-path only — a real forward would send mail to a real recipient.
+    // A happy-path variant can be added later that forwards a self-sent
+    // test email back to the logged-in user.
     const fwd = try client.callTool(
         "forward-email",
         "{\"emailId\":\"BOGUS\",\"comment\":\"x\",\"to\":[\"test@example.com\"]}",
@@ -1546,7 +1577,7 @@ pub fn testListMailFolders(client: *McpClient) !void {
 /// unread then read again. End state matches start state.
 pub fn testMarkReadLifecycle(client: *McpClient) !void {
     const target_id = (try grabFirstInboxEmailId(client)) orelse {
-        std.debug.print("  ⓘ Inbox empty — skipping mark-read test\n", .{});
+        fail("mark-read-email", "inbox empty — test expects at least one email; send a seed first");
         return;
     };
     defer client.allocator.free(target_id);
@@ -1586,7 +1617,8 @@ pub fn testMarkReadLifecycle(client: *McpClient) !void {
 /// request body are well-formed end-to-end.
 pub fn testMoveEmailLifecycle(client: *McpClient) !void {
     if (std.c.getenv("E2E_EMAIL_SIDE_EFFECTS") == null) {
-        std.debug.print("  ⓘ Skipping move-email destructive test; running error-path only\n", .{});
+        // Error-path only. The happy-path variant moves a real inbox
+        // email to Archive and back — opt-in via E2E_EMAIL_SIDE_EFFECTS.
         const move = try client.callTool("move-email", "{\"emailId\":\"BOGUS\",\"destinationId\":\"BOGUS\"}");
         defer move.deinit();
         const text = McpClient.getResultText(move) orelse {
@@ -1658,17 +1690,28 @@ fn extractFolderIdByName(allocator: Allocator, text: []const u8, name: []const u
 /// by default. Set E2E_EMAIL_SIDE_EFFECTS=1 to run.
 pub fn testEmailAttachmentDownload(client: *McpClient) !void {
     if (std.c.getenv("E2E_EMAIL_SIDE_EFFECTS") == null) {
-        std.debug.print("  ⓘ Skipping download-email-attachment (requires send-then-wait roundtrip; set E2E_EMAIL_SIDE_EFFECTS=1)\n", .{});
+        // Fast error-path: BOGUS ids must surface a typed error.
+        const dl = try client.callTool(
+            "download-email-attachment",
+            "{\"emailId\":\"BOGUS\",\"attachmentId\":\"BOGUS\"}",
+        );
+        defer dl.deinit();
+        const text = McpClient.getResultText(dl) orelse {
+            fail("download-email-attachment (error path)", "no text");
+            return;
+        };
+        if (std.mem.indexOf(u8, text, "400") != null or std.mem.indexOf(u8, text, "not found") != null) {
+            pass("download-email-attachment (typed error on bogus id)");
+        } else {
+            fail("download-email-attachment (error path)", text);
+        }
         return;
     }
     return testEmailAttachmentDownloadSideEffects(client);
 }
 
 fn testEmailAttachmentDownloadSideEffects(client: *McpClient) !void {
-    const test_email = if (std.c.getenv("E2E_TEST_EMAIL")) |ptr| std.mem.span(ptr) else {
-        std.debug.print("  ⓘ E2E_TEST_EMAIL not set — skipping attachment download test\n", .{});
-        return;
-    };
+    const test_email = std.mem.span(std.c.getenv("E2E_TEST_EMAIL").?);
 
     // Create draft.
     var create_buf: [1024]u8 = undefined;
@@ -1714,7 +1757,7 @@ fn testEmailAttachmentDownloadSideEffects(client: *McpClient) !void {
         probe_id = helpers.findEmailBySubject(client.allocator, list_text, "E2E ATTACH-DL PROBE");
     }
     const found = probe_id orelse {
-        std.debug.print("  ⓘ attachment probe email never arrived — skipping\n", .{});
+        fail("download-email-attachment", "attachment probe email never arrived after 60s");
         return;
     };
     defer client.allocator.free(found);
@@ -1803,10 +1846,12 @@ fn extractFormattedField(allocator: Allocator, text: []const u8, marker: []const
 /// Test: get-schedule for self over an 8-hour window. Expect a scheduleId
 /// and an availabilityView string in the output.
 pub fn testGetSchedule(client: *McpClient) !void {
-    const schedule_email = if (std.c.getenv("E2E_SCHEDULE_EMAIL")) |ptr| std.mem.span(ptr) else {
-        std.debug.print("  ⓘ E2E_SCHEDULE_EMAIL not set — skipping get-schedule test\n", .{});
-        return;
-    };
+    // Defaults to E2E_TEST_EMAIL — the logged-in user's own address,
+    // which is always a valid schedule target.
+    const schedule_email = if (std.c.getenv("E2E_SCHEDULE_EMAIL")) |ptr|
+        std.mem.span(ptr)
+    else
+        std.mem.span(std.c.getenv("E2E_TEST_EMAIL").?);
 
     var args_buf: [1024]u8 = undefined;
     const args = std.fmt.bufPrint(
@@ -1833,10 +1878,10 @@ pub fn testGetSchedule(client: *McpClient) !void {
 /// specific slots (calendar state varies) — we only assert the call
 /// succeeded and came back with either suggestions or the "none found" msg.
 pub fn testFindMeetingTimes(client: *McpClient) !void {
-    const schedule_email = if (std.c.getenv("E2E_SCHEDULE_EMAIL")) |ptr| std.mem.span(ptr) else {
-        std.debug.print("  ⓘ E2E_SCHEDULE_EMAIL not set — skipping find-meeting-times test\n", .{});
-        return;
-    };
+    const schedule_email = if (std.c.getenv("E2E_SCHEDULE_EMAIL")) |ptr|
+        std.mem.span(ptr)
+    else
+        std.mem.span(std.c.getenv("E2E_TEST_EMAIL").?);
 
     var args_buf: [1024]u8 = undefined;
     const args = std.fmt.bufPrint(
