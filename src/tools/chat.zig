@@ -208,6 +208,113 @@ pub fn handleCreateChat(ctx: ToolContext) void {
     ctx.sendResult(response);
 }
 
+/// Search Teams chat messages by keyword across the user's entire history.
+///
+/// Uses POST /search/query with entityTypes=["chatMessage"] — the Microsoft
+/// Search index. Unlike /me/chats/{id}/messages, this endpoint searches
+/// across ALL chats (1:1, group, meeting) AND covers older content that
+/// chat-message pagination silently stops returning. It's the only way to
+/// find Teams messages from more than a few weeks ago by keyword.
+///
+/// Graph caps each search at 25 results by default; pass 'size' (1-500)
+/// to raise the cap, or 'from' to paginate.
+pub fn handleSearchChatMessages(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide query.") orelse return;
+    const query = ctx.getStringArg(args, "query", "Missing 'query' argument.") orelse return;
+
+    const size = json_rpc.getStringArg(args, "size") orelse "25";
+    const from = json_rpc.getStringArg(args, "from") orelse "0";
+
+    // Build the search request body. The query is JSON-escaped so quotes
+    // and backslashes in the user's keywords don't break the body.
+    var body_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
+    defer body_buf.deinit();
+    const bw = &body_buf.writer;
+    bw.writeAll("{\"requests\":[{\"entityTypes\":[\"chatMessage\"],\"query\":{\"queryString\":") catch return;
+    std.json.Stringify.encodeJsonString(query, .{}, bw) catch return;
+    bw.print("}},\"from\":{s},\"size\":{s}}}]}}", .{ from, size }) catch return;
+    // Note: the closing braces above intentionally balance the opening
+    // "{\"requests\":[{..." — two for the request object, one for the array
+    // wrapper, one for the top-level object.
+
+    const response = graph.post(ctx.allocator, ctx.io, token, "/search/query", body_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
+        return;
+    };
+    defer ctx.allocator.free(response);
+
+    const summary = summarizeSearchResponse(ctx.allocator, response) catch {
+        ctx.sendResult(response);
+        return;
+    };
+    defer ctx.allocator.free(summary);
+    ctx.sendResult(if (summary.len > 0) summary else "No chat messages matched that query.");
+}
+
+/// Parse /search/query's nested response and produce a condensed summary.
+///
+/// Shape (abridged): { value: [ { hitsContainers: [ { hits: [ { resource: {
+///   from, createdDateTime, chatId, body: { content } } } ] } ] } ] }
+fn summarizeSearchResponse(allocator: Allocator, response: []const u8) ![]u8 {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, response, .{}) catch return error.ParseFailed;
+    defer parsed.deinit();
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    errdefer out.deinit();
+    const w = &out.writer;
+
+    const root = switch (parsed.value) { .object => |o| o, else => return error.ParseFailed };
+    const value_arr = switch (root.get("value") orelse return error.ParseFailed) { .array => |a| a, else => return error.ParseFailed };
+
+    for (value_arr.items) |resp_val| {
+        const resp = switch (resp_val) { .object => |o| o, else => continue };
+        const containers = switch (resp.get("hitsContainers") orelse continue) { .array => |a| a, else => continue };
+        for (containers.items) |container_val| {
+            const container = switch (container_val) { .object => |o| o, else => continue };
+            const hits = switch (container.get("hits") orelse continue) { .array => |a| a, else => continue };
+            for (hits.items) |hit_val| {
+                const hit = switch (hit_val) { .object => |o| o, else => continue };
+                const resource = switch (hit.get("resource") orelse continue) { .object => |o| o, else => continue };
+
+                const when = switch (resource.get("createdDateTime") orelse .null) { .string => |s| s, else => "?" };
+                const chat_id = switch (resource.get("chatId") orelse .null) { .string => |s| s, else => "" };
+                var from_name: []const u8 = "?";
+                if (resource.get("from")) |f_val| {
+                    if (switch (f_val) { .object => |o| o, else => null }) |f_obj| {
+                        if (f_obj.get("user")) |u_val| {
+                            if (switch (u_val) { .object => |o| o, else => null }) |u_obj| {
+                                if (u_obj.get("displayName")) |n_val| {
+                                    if (switch (n_val) { .string => |s| s, else => null }) |n| from_name = n;
+                                }
+                            }
+                        }
+                    }
+                }
+                var preview: []const u8 = "";
+                if (resource.get("body")) |b_val| {
+                    if (switch (b_val) { .object => |o| o, else => null }) |b_obj| {
+                        if (b_obj.get("content")) |c_val| {
+                            if (switch (c_val) { .string => |s| s, else => null }) |c| preview = c;
+                        }
+                    }
+                }
+                // Fall back to summary when body isn't hydrated.
+                if (preview.len == 0) {
+                    if (hit.get("summary")) |s_val| {
+                        if (switch (s_val) { .string => |s| s, else => null }) |s| preview = s;
+                    }
+                }
+
+                w.print("[{s}] from {s} — chatId: {s}\n", .{ when, from_name, chat_id }) catch continue;
+                if (preview.len > 0) w.print("  {s}\n", .{preview}) catch {};
+            }
+        }
+    }
+
+    return out.toOwnedSlice();
+}
+
 /// Soft-delete a chat message.
 pub fn handleDeleteChatMessage(ctx: ToolContext) void {
     const token = ctx.requireAuth() orelse return;

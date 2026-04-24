@@ -87,6 +87,7 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "list-chat-messages", chat_tools.handleListChatMessages },
     .{ "send-chat-message", chat_tools.handleSendChatMessage },
     .{ "create-chat", chat_tools.handleCreateChat },
+    .{ "search-chat-messages", chat_tools.handleSearchChatMessages },
     .{ "delete-chat-message", chat_tools.handleDeleteChatMessage },
     // --- Calendar ---
     .{ "get-calendar-event", calendar_tools.handleGetCalendarEvent },

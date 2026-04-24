@@ -176,6 +176,12 @@ const create_chat_props = [_]PropSpec{
     .{ .name = "emailTwo", .type = "string", .description = "Second member's email address" },
 };
 
+const search_chat_msgs_props = [_]PropSpec{
+    .{ .name = "query", .type = "string", .description = "Keyword or phrase to search for across all Teams chat messages" },
+    .{ .name = "size", .type = "string", .description = "Optional max results to return (1-500, default 25)" },
+    .{ .name = "from", .type = "string", .description = "Optional result offset for pagination (default 0)" },
+};
+
 const list_channels_props = [_]PropSpec{team_id_prop};
 
 const list_chan_msgs_props = [_]PropSpec{
@@ -570,6 +576,12 @@ const all_tools = [_]ToolSpec{
         .description = "Create or find an existing 1:1 Microsoft Teams chat between two users by email address.",
         .props = &create_chat_props,
         .required = &.{ "emailOne", "emailTwo" },
+    },
+    .{
+        .name = "search-chat-messages",
+        .description = "Search Teams chat messages by keyword across ALL chats (1:1, group, meeting) using the Microsoft Search index. Unlike list-chat-messages, this finds older content that pagination can't reach. Returns date, sender, chatId, and a preview per match.",
+        .props = &search_chat_msgs_props,
+        .required = &.{"query"},
     },
     // --- Teams Channels ---
     .{
