@@ -82,6 +82,10 @@ const delete_email_props = [_]PropSpec{
     .{ .name = "emailId", .type = "string", .description = "The ID of the email to delete (from list-emails or read-email)" },
 };
 
+const batch_delete_emails_props = [_]PropSpec{
+    .{ .name = "emailIds", .type = "array", .description = "Array of email IDs to delete (from list-emails, search-emails, or read-email). Continues on per-id failures and reports totals." },
+};
+
 // --- Email action props (reply / forward / search / folders / mark / move / attachments) ---
 
 const reply_email_props = [_]PropSpec{
@@ -624,6 +628,12 @@ const all_tools = [_]ToolSpec{
         .description = "Delete an email by ID. Moves the email to the Deleted Items folder.",
         .props = &delete_email_props,
         .required = &.{"emailId"},
+    },
+    .{
+        .name = "batch-delete-emails",
+        .description = "Delete many emails in one call. Takes an array of emailIds and issues a DELETE per id. Returns a summary of successes and failures.",
+        .props = &batch_delete_emails_props,
+        .required = &.{"emailIds"},
     },
     .{
         .name = "delete-chat-message",

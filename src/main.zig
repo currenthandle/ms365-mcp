@@ -64,6 +64,7 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "read-email", email_tools.handleReadEmail },
     .{ "send-email", email_tools.handleSendEmail },
     .{ "delete-email", email_tools.handleDeleteEmail },
+    .{ "batch-delete-emails", email_tools.handleBatchDeleteEmails },
     .{ "reply-email", email_tools.handleReplyEmail },
     .{ "reply-all-email", email_tools.handleReplyAllEmail },
     .{ "forward-email", email_tools.handleForwardEmail },

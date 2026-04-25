@@ -191,6 +191,13 @@ pub fn main() !void {
         assertAlive(&client, "chat lifecycle");
     }
 
+    if (shouldRun("journeys")) {
+        std.debug.print("\n\x1b[1mCross-tool journeys:\x1b[0m\n", .{});
+        try cases.testChatJourneySearchAndSend(&client);
+        try cases.testBatchDeleteEmails(&client);
+        assertAlive(&client, "journeys");
+    }
+
     if (shouldRun("channels")) {
         std.debug.print("\n\x1b[1mLifecycle — Channels:\x1b[0m\n", .{});
         try cases.testChannelLifecycle(&client);
