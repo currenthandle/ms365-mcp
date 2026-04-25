@@ -21,6 +21,7 @@ const std = @import("std");
 const json_rpc = @import("../json_rpc.zig");
 const state_mod = @import("../state.zig");
 const types = @import("../types.zig");
+const graph_errors = @import("../graph_errors.zig");
 
 const Value = std.json.Value;
 const ObjectMap = std.json.ObjectMap;
@@ -110,5 +111,41 @@ pub const ToolContext = struct {
         if (json_rpc.getStringArg(args, key)) |v| {
             map.put(self.allocator, key, .{ .string = v }) catch {};
         }
+    }
+
+    // --- Error helpers ---
+
+    /// Route any Graph-layer error through graph_errors.explain and send the
+    /// resulting human-readable message to the MCP client.
+    ///
+    /// `err` accepts `anyerror` so handlers can `catch |err| ctx.sendGraphError(err)`
+    /// without caller-side error-set narrowing. Unknown errors fall through to
+    /// a generic "Graph API request failed." string.
+    pub fn sendGraphError(self: ToolContext, err: anyerror) void {
+        // Try to coerce `err` into a GraphError variant. Zig doesn't offer
+        // runtime-checked `@errorCast`-on-supertype, so we pattern-match.
+        const ge: ?graph_errors.GraphError = switch (err) {
+            error.Unauthorized => graph_errors.GraphError.Unauthorized,
+            error.Forbidden => graph_errors.GraphError.Forbidden,
+            error.InsufficientScope => graph_errors.GraphError.InsufficientScope,
+            error.Throttled => graph_errors.GraphError.Throttled,
+            error.NotFound => graph_errors.GraphError.NotFound,
+            error.Conflict => graph_errors.GraphError.Conflict,
+            error.BadRequest => graph_errors.GraphError.BadRequest,
+            error.ServerError => graph_errors.GraphError.ServerError,
+            error.NetworkError => graph_errors.GraphError.NetworkError,
+            else => null,
+        };
+
+        if (ge) |variant| {
+            if (graph_errors.explain(self.allocator, variant, null)) |msg| {
+                defer self.allocator.free(msg);
+                self.sendResult(msg);
+                return;
+            } else |_| {
+                // Fallthrough to the generic string below on allocPrint failure.
+            }
+        }
+        self.sendResult("Graph API request failed.");
     }
 };

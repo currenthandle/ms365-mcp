@@ -37,6 +37,7 @@ const calendar_tools = @import("tools/calendar.zig");
 const chat_tools = @import("tools/chat.zig");
 const channel_tools = @import("tools/channels.zig");
 const sharepoint_tools = @import("tools/sharepoint.zig");
+const onedrive_tools = @import("tools/onedrive.zig");
 const user_tools = @import("tools/users.zig");
 const ToolContext = @import("tools/context.zig").ToolContext;
 
@@ -63,6 +64,17 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "read-email", email_tools.handleReadEmail },
     .{ "send-email", email_tools.handleSendEmail },
     .{ "delete-email", email_tools.handleDeleteEmail },
+    .{ "batch-delete-emails", email_tools.handleBatchDeleteEmails },
+    .{ "reply-email", email_tools.handleReplyEmail },
+    .{ "reply-all-email", email_tools.handleReplyAllEmail },
+    .{ "forward-email", email_tools.handleForwardEmail },
+    .{ "search-emails", email_tools.handleSearchEmails },
+    .{ "list-mail-folders", email_tools.handleListMailFolders },
+    .{ "mark-read-email", email_tools.handleMarkReadEmail },
+    .{ "move-email", email_tools.handleMoveEmail },
+    .{ "list-email-attachments", email_tools.handleListEmailAttachments },
+    .{ "read-email-attachment", email_tools.handleReadEmailAttachment },
+    .{ "download-email-attachment", email_tools.handleDownloadEmailAttachment },
     // --- Drafts ---
     .{ "create-draft", draft_tools.handleCreateDraft },
     .{ "send-draft", draft_tools.handleSendDraft },
@@ -76,6 +88,7 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "list-chat-messages", chat_tools.handleListChatMessages },
     .{ "send-chat-message", chat_tools.handleSendChatMessage },
     .{ "create-chat", chat_tools.handleCreateChat },
+    .{ "search-chat-messages", chat_tools.handleSearchChatMessages },
     .{ "delete-chat-message", chat_tools.handleDeleteChatMessage },
     // --- Calendar ---
     .{ "get-calendar-event", calendar_tools.handleGetCalendarEvent },
@@ -83,6 +96,9 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "create-calendar-event", calendar_tools.handleCreateCalendarEvent },
     .{ "update-calendar-event", calendar_tools.handleUpdateCalendarEvent },
     .{ "delete-calendar-event", calendar_tools.handleDeleteCalendarEvent },
+    .{ "find-meeting-times", calendar_tools.handleFindMeetingTimes },
+    .{ "get-schedule", calendar_tools.handleGetSchedule },
+    .{ "respond-to-event", calendar_tools.handleRespondToEvent },
     // --- Teams channels ---
     .{ "list-teams", channel_tools.handleListTeams },
     .{ "list-channels", channel_tools.handleListChannels },
@@ -101,6 +117,12 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "create-sharepoint-folder", sharepoint_tools.handleCreateFolder },
     .{ "delete-sharepoint-item", sharepoint_tools.handleDeleteItem },
     .{ "download-sharepoint-file", sharepoint_tools.handleDownloadFile },
+    // --- OneDrive (personal) ---
+    .{ "list-onedrive-items", onedrive_tools.handleListItems },
+    .{ "upload-onedrive-file", onedrive_tools.handleUploadFile },
+    .{ "upload-onedrive-content", onedrive_tools.handleUploadContent },
+    .{ "download-onedrive-file", onedrive_tools.handleDownloadFile },
+    .{ "delete-onedrive-item", onedrive_tools.handleDeleteItem },
     // --- Utility ---
     .{ "search-users", user_tools.handleSearchUsers },
     .{ "get-profile", user_tools.handleGetProfile },

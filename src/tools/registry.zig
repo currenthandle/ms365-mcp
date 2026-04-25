@@ -54,12 +54,24 @@ const channel_id_prop = PropSpec{
 // --- Per-tool input specs ---
 // Ordered to match the tools array below so the file reads top-down.
 
+// Shared format selector used by every tool that writes a message body.
+// Default 'text' runs the message through a safe HTML-escape + URL
+// auto-link pass. 'html' trusts the caller's markup verbatim — use it
+// when the agent is producing deliberate HTML (bold, hyperlinks,
+// line breaks) that would otherwise be escaped.
+const format_prop = PropSpec{
+    .name = "format",
+    .type = "string",
+    .description = "Optional message format: 'text' (default; HTML-escaped, URLs auto-linked) or 'html' (caller-supplied HTML rendered verbatim — use for bold, links, line breaks).",
+};
+
 const send_email_props = [_]PropSpec{
     .{ .name = "to", .type = "array", .description = "Array of recipient email addresses" },
     .{ .name = "subject", .type = "string", .description = "Email subject line" },
     .{ .name = "body", .type = "string", .description = "Email body text" },
     .{ .name = "cc", .type = "array", .description = "Optional array of CC email addresses" },
     .{ .name = "bcc", .type = "array", .description = "Optional array of BCC email addresses" },
+    format_prop,
 };
 
 const read_email_props = [_]PropSpec{
@@ -68,6 +80,52 @@ const read_email_props = [_]PropSpec{
 
 const delete_email_props = [_]PropSpec{
     .{ .name = "emailId", .type = "string", .description = "The ID of the email to delete (from list-emails or read-email)" },
+};
+
+const batch_delete_emails_props = [_]PropSpec{
+    .{ .name = "emailIds", .type = "array", .description = "Array of email IDs to delete (from list-emails, search-emails, or read-email). Continues on per-id failures and reports totals." },
+};
+
+// --- Email action props (reply / forward / search / folders / mark / move / attachments) ---
+
+const reply_email_props = [_]PropSpec{
+    .{ .name = "emailId", .type = "string", .description = "The ID of the email to reply to (from list-emails or search-emails)" },
+    .{ .name = "comment", .type = "string", .description = "The reply text to send" },
+    .{ .name = "to", .type = "array", .description = "Optional additional recipients. Omit to reply only to the original sender." },
+};
+
+const reply_all_email_props = [_]PropSpec{
+    .{ .name = "emailId", .type = "string", .description = "The ID of the email to reply-all to" },
+    .{ .name = "comment", .type = "string", .description = "The reply text to send to everyone on the thread" },
+};
+
+const forward_email_props = [_]PropSpec{
+    .{ .name = "emailId", .type = "string", .description = "The ID of the email to forward" },
+    .{ .name = "comment", .type = "string", .description = "Optional text to include above the forwarded content (use empty string for none)" },
+    .{ .name = "to", .type = "array", .description = "Recipients to forward to — required, at least one" },
+};
+
+const search_emails_props = [_]PropSpec{
+    .{ .name = "query", .type = "string", .description = "Keyword or phrase to search for (matches subject, body, sender, and recipient fields)" },
+};
+
+const mark_read_email_props = [_]PropSpec{
+    .{ .name = "emailId", .type = "string", .description = "The ID of the email to mark" },
+    .{ .name = "isRead", .type = "boolean", .description = "Optional — true to mark read (default), false to mark unread" },
+};
+
+const move_email_props = [_]PropSpec{
+    .{ .name = "emailId", .type = "string", .description = "The ID of the email to move" },
+    .{ .name = "destinationId", .type = "string", .description = "Folder ID to move the email into (from list-mail-folders) — NOT the folder name" },
+};
+
+const list_email_attachments_props = [_]PropSpec{
+    .{ .name = "emailId", .type = "string", .description = "The ID of the email whose attachments you want to list" },
+};
+
+const read_email_attachment_props = [_]PropSpec{
+    .{ .name = "emailId", .type = "string", .description = "The ID of the email containing the attachment" },
+    .{ .name = "attachmentId", .type = "string", .description = "The ID of the attachment (from list-email-attachments)" },
 };
 
 const send_draft_props = [_]PropSpec{
@@ -122,6 +180,12 @@ const create_chat_props = [_]PropSpec{
     .{ .name = "emailTwo", .type = "string", .description = "Second member's email address" },
 };
 
+const search_chat_msgs_props = [_]PropSpec{
+    .{ .name = "query", .type = "string", .description = "Keyword or phrase to search for across all Teams chat messages" },
+    .{ .name = "size", .type = "string", .description = "Optional max results to return (1-500, default 25)" },
+    .{ .name = "from", .type = "string", .description = "Optional result offset for pagination (default 0)" },
+};
+
 const list_channels_props = [_]PropSpec{team_id_prop};
 
 const list_chan_msgs_props = [_]PropSpec{
@@ -147,6 +211,7 @@ const post_chan_props = [_]PropSpec{
     .{ .name = "message", .type = "string", .description = "The message text to post. Use @Name for mentions (requires mentions parameter)." },
     .{ .name = "subject", .type = "string", .description = "Optional subject/title for the channel post" },
     .{ .name = "mentions", .type = "string", .description = mentions_desc },
+    format_prop,
 };
 
 const chan_reply_props = [_]PropSpec{
@@ -155,6 +220,7 @@ const chan_reply_props = [_]PropSpec{
     .{ .name = "messageId", .type = "string", .description = "The ID of the top-level message/post to reply to (from list-channel-messages)" },
     .{ .name = "message", .type = "string", .description = "The reply text with @Name for each person to mention (e.g. 'Hey @Rohit check this out')" },
     .{ .name = "mentions", .type = "string", .description = mentions_desc },
+    format_prop,
 };
 
 const delete_chat_msg_props = [_]PropSpec{
@@ -207,9 +273,33 @@ const cal_list_props = [_]PropSpec{
     .{ .name = "endDateTime", .type = "string", .description = "End of date range in local time, ISO 8601 format (e.g. 2026-02-24T00:00:00)" },
 };
 
+// --- Scheduling props (Phase 6) ---
+
+const find_times_props = [_]PropSpec{
+    .{ .name = "attendees", .type = "array", .description = "Array of required attendee email addresses" },
+    .{ .name = "start", .type = "string", .description = "Earliest acceptable start time, ISO 8601 local time (e.g. 2026-04-23T09:00:00)" },
+    .{ .name = "end", .type = "string", .description = "Latest acceptable end time, ISO 8601 local time" },
+    .{ .name = "durationMinutes", .type = "number", .description = "Optional meeting length in minutes. Default 30." },
+};
+
+const get_schedule_props = [_]PropSpec{
+    .{ .name = "schedules", .type = "array", .description = "Array of email addresses (people, rooms, or equipment) to check" },
+    .{ .name = "start", .type = "string", .description = "Start of the window to query, ISO 8601 local time" },
+    .{ .name = "end", .type = "string", .description = "End of the window to query, ISO 8601 local time" },
+    .{ .name = "availabilityViewInterval", .type = "number", .description = "Minutes per cell in the availabilityView string. Default 60." },
+};
+
+const respond_event_props = [_]PropSpec{
+    .{ .name = "eventId", .type = "string", .description = "The ID of the event to respond to (from list-calendar-events)" },
+    .{ .name = "action", .type = "string", .description = "One of: accept, decline, tentativelyAccept" },
+    .{ .name = "comment", .type = "string", .description = "Optional comment sent with the response" },
+    .{ .name = "sendResponse", .type = "boolean", .description = "Optional — whether to notify the organizer. Default true." },
+};
+
 const send_chat_props = [_]PropSpec{
     .{ .name = "chatId", .type = "string", .description = "The ID of the chat to send the message to" },
     .{ .name = "message", .type = "string", .description = "The message text to send" },
+    format_prop,
 };
 
 // --- SharePoint props ---
@@ -236,6 +326,29 @@ const sp_list_items_props = [_]PropSpec{
     sp_site_id_prop,
     sp_drive_id_prop,
     .{ .name = "folderPath", .type = "string", .description = "Optional folder path relative to drive root (e.g. '2026/Q1'). Omit to list root." },
+};
+
+// --- OneDrive (personal /me/drive) props ---
+
+const od_list_items_props = [_]PropSpec{
+    .{ .name = "folderPath", .type = "string", .description = "Optional folder path relative to OneDrive root. Omit to list root." },
+};
+
+const od_upload_file_props = [_]PropSpec{
+    .{ .name = "path", .type = "string", .description = "Destination path in OneDrive (e.g. 'Documents/report.pdf'). Must not start with '/' or contain '..'." },
+    .{ .name = "filePath", .type = "string", .description = "Local absolute path to the file to upload." },
+    .{ .name = "contentType", .type = "string", .description = "Optional MIME type override." },
+};
+
+const od_upload_content_props = [_]PropSpec{
+    .{ .name = "path", .type = "string", .description = "Destination path in OneDrive." },
+    .{ .name = "content", .type = "string", .description = "Raw string content (markdown, text, JSON, etc.) to upload." },
+    .{ .name = "contentType", .type = "string", .description = "Optional MIME type override." },
+};
+
+const od_item_target_props = [_]PropSpec{
+    .{ .name = "path", .type = "string", .description = "Path of the item relative to OneDrive root. Pass this OR itemId, not both." },
+    .{ .name = "itemId", .type = "string", .description = "Alternative to path: the drive item's ID. Pass this OR path, not both." },
 };
 
 const sp_upload_file_props = [_]PropSpec{
@@ -309,6 +422,24 @@ const all_tools = [_]ToolSpec{
         .props = &cal_delete_props,
         .required = &.{"eventId"},
     },
+    .{
+        .name = "find-meeting-times",
+        .description = "Ask Microsoft Graph to suggest meeting times that work for a set of attendees within a time window. Returns confidence-scored suggestions with start/end datetimes.",
+        .props = &find_times_props,
+        .required = &.{ "attendees", "start", "end" },
+    },
+    .{
+        .name = "get-schedule",
+        .description = "Look up free/busy windows for one or more people, rooms, or equipment. Returns an availabilityView string per schedule where each character maps to one interval: 0=free, 1=tentative, 2=busy, 3=outOfOffice, 4=workingElsewhere.",
+        .props = &get_schedule_props,
+        .required = &.{ "schedules", "start", "end" },
+    },
+    .{
+        .name = "respond-to-event",
+        .description = "Accept, decline, or tentatively accept a meeting invite you've received. Pass the eventId from list-calendar-events and an action of 'accept', 'decline', or 'tentativelyAccept'.",
+        .props = &respond_event_props,
+        .required = &.{ "eventId", "action" },
+    },
     // --- Email ---
     .{
         .name = "list-emails",
@@ -325,6 +456,64 @@ const all_tools = [_]ToolSpec{
         .description = "Send an email via Microsoft 365 Outlook. Supports multiple recipients, CC, and BCC.",
         .props = &send_email_props,
         .required = &.{ "to", "subject", "body" },
+    },
+    .{
+        .name = "reply-email",
+        .description = "Reply to an email. By default, the reply goes only to the original sender; pass 'to' to add more recipients. Use 'comment' for the reply text.",
+        .props = &reply_email_props,
+        .required = &.{ "emailId", "comment" },
+    },
+    .{
+        .name = "reply-all-email",
+        .description = "Reply to everyone on the original email thread (original sender plus every to/cc recipient).",
+        .props = &reply_all_email_props,
+        .required = &.{ "emailId", "comment" },
+    },
+    .{
+        .name = "forward-email",
+        .description = "Forward an email to one or more new recipients. 'to' is required. Use 'comment' for text that appears above the forwarded content (pass an empty string to omit).",
+        .props = &forward_email_props,
+        .required = &.{ "emailId", "comment", "to" },
+    },
+    .{
+        .name = "search-emails",
+        .description = "Search the user's mailbox for emails matching a keyword. Matches subject, body, sender, and recipient fields. Returns up to 25 matches.",
+        .props = &search_emails_props,
+        .required = &.{"query"},
+    },
+    .{
+        .name = "list-mail-folders",
+        .description = "List the user's mail folders (Inbox, Sent, Drafts, Archive, plus any custom folders). Needed for move-email, which takes a folder ID, not a folder name.",
+    },
+    .{
+        .name = "mark-read-email",
+        .description = "Mark an email as read (default) or unread. Pass isRead=false to mark unread.",
+        .props = &mark_read_email_props,
+        .required = &.{"emailId"},
+    },
+    .{
+        .name = "move-email",
+        .description = "Move an email to a different folder. Use list-mail-folders first to get the destination folder ID — 'destinationId' is an ID, not a folder name.",
+        .props = &move_email_props,
+        .required = &.{ "emailId", "destinationId" },
+    },
+    .{
+        .name = "list-email-attachments",
+        .description = "List attachments on a received email. Returns each attachment's name, MIME type, size, and ID.",
+        .props = &list_email_attachments_props,
+        .required = &.{"emailId"},
+    },
+    .{
+        .name = "read-email-attachment",
+        .description = "Fetch an email attachment's metadata plus its base64-encoded bytes. Suitable for small text attachments. For binary files (PDFs, images, etc.) use download-email-attachment instead.",
+        .props = &read_email_attachment_props,
+        .required = &.{ "emailId", "attachmentId" },
+    },
+    .{
+        .name = "download-email-attachment",
+        .description = "Download a binary email attachment to a local temp file and return its absolute path. Use this for PDFs, images, videos — any file where returning raw bytes inline would corrupt the JSON-RPC channel. Returns the temp path for a follow-up tool call to read.",
+        .props = &read_email_attachment_props,
+        .required = &.{ "emailId", "attachmentId" },
     },
     .{
         .name = "create-draft",
@@ -392,6 +581,12 @@ const all_tools = [_]ToolSpec{
         .props = &create_chat_props,
         .required = &.{ "emailOne", "emailTwo" },
     },
+    .{
+        .name = "search-chat-messages",
+        .description = "Search Teams chat messages by keyword across ALL chats (1:1, group, meeting) using the Microsoft Search index. Unlike list-chat-messages, this finds older content that pagination can't reach. Returns date, sender, chatId, and a preview per match.",
+        .props = &search_chat_msgs_props,
+        .required = &.{"query"},
+    },
     // --- Teams Channels ---
     .{
         .name = "list-teams",
@@ -433,6 +628,12 @@ const all_tools = [_]ToolSpec{
         .description = "Delete an email by ID. Moves the email to the Deleted Items folder.",
         .props = &delete_email_props,
         .required = &.{"emailId"},
+    },
+    .{
+        .name = "batch-delete-emails",
+        .description = "Delete many emails in one call. Takes an array of emailIds and issues a DELETE per id. Returns a summary of successes and failures.",
+        .props = &batch_delete_emails_props,
+        .required = &.{"emailIds"},
     },
     .{
         .name = "delete-chat-message",
@@ -500,6 +701,34 @@ const all_tools = [_]ToolSpec{
         .description = "Download a file's contents from a SharePoint drive. Identify the file by either 'path' or 'itemId'. Provide exactly one. Returns the raw file bytes.",
         .props = &sp_download_file_props,
         .required = &.{ "siteId", "driveId" },
+    },
+    // --- OneDrive (personal) ---
+    .{
+        .name = "list-onedrive-items",
+        .description = "List files and folders in the signed-in user's personal OneDrive. Omit folderPath to list root.",
+        .props = &od_list_items_props,
+    },
+    .{
+        .name = "upload-onedrive-file",
+        .description = "Upload a local file to OneDrive at 'path'. Auto-chunks files larger than 4 MiB.",
+        .props = &od_upload_file_props,
+        .required = &.{ "path", "filePath" },
+    },
+    .{
+        .name = "upload-onedrive-content",
+        .description = "Upload a raw string (markdown, text, JSON, etc.) to OneDrive at 'path'.",
+        .props = &od_upload_content_props,
+        .required = &.{ "path", "content" },
+    },
+    .{
+        .name = "download-onedrive-file",
+        .description = "Download a OneDrive file by path or itemId. Writes bytes to a temp path and returns the local path — binary-safe.",
+        .props = &od_item_target_props,
+    },
+    .{
+        .name = "delete-onedrive-item",
+        .description = "Delete a OneDrive file or folder by path or itemId.",
+        .props = &od_item_target_props,
     },
     // --- Utility ---
     .{

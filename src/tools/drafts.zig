@@ -7,6 +7,18 @@ const json_rpc = @import("../json_rpc.zig");
 const ToolContext = @import("context.zig").ToolContext;
 const email_tools = @import("email.zig");
 const mime = @import("../mime.zig");
+const json_util = @import("../json_util.zig");
+const formatter = @import("../formatter.zig");
+
+const attachment_fields = [_]formatter.FieldSpec{
+    .{ .path = "name", .label = "name" },
+    .{ .path = "contentType", .label = "type" },
+    // size is a number — formatter only outputs strings for now, so it
+    // gets silently skipped. No regression; we keep the FieldSpec line as
+    // documentation of what we'd LIKE to surface if/when formatter grows
+    // numeric support.
+    .{ .path = "size", .label = "bytes" },
+};
 
 const Value = std.json.Value;
 const ObjectMap = std.json.ObjectMap;
@@ -50,14 +62,17 @@ pub fn handleCreateDraft(ctx: ToolContext) void {
     defer json_buf.deinit();
     std.json.Stringify.value(draft_request, .{ .emit_null_optional_fields = false }, &json_buf.writer) catch return;
 
-    const response = graph.post(ctx.allocator, ctx.io, token, "/me/messages", json_buf.written()) catch {
-        ctx.sendResult("Failed to create draft.");
+    const response = graph.post(ctx.allocator, ctx.io, token, "/me/messages", json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    // Extract the draft ID from the response.
-    const draft_id = extractJsonId(ctx.allocator, response);
+    // Extract the draft ID from the response. Owned; leak is intentional —
+    // the server process serves one JSON-RPC turn at a time and this string
+    // is tiny + lives for the request response cycle only.
+    const draft_id = json_util.extractId(ctx.allocator, response) orelse
+        (ctx.allocator.dupe(u8, "(unknown)") catch return);
     const msg = std.fmt.allocPrint(ctx.allocator, "Draft created successfully. Draft ID: {s}", .{draft_id}) catch return;
     defer ctx.allocator.free(msg);
     ctx.sendResult(msg);
@@ -73,8 +88,8 @@ pub fn handleSendDraft(ctx: ToolContext) void {
     defer ctx.allocator.free(path);
 
     // Empty JSON body required — Zig's HTTP client asserts on POST with null payload.
-    _ = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch {
-        ctx.sendResult("Failed to send draft.");
+    _ = graph.post(ctx.allocator, ctx.io, token, path, "{}") catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -129,8 +144,8 @@ pub fn handleUpdateDraft(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}", .{draft_id}) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.patch(ctx.allocator, ctx.io, token, path, json_buf.written()) catch {
-        ctx.sendResult("Failed to update draft.");
+    _ = graph.patch(ctx.allocator, ctx.io, token, path, json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -146,8 +161,8 @@ pub fn handleDeleteDraft(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}", .{draft_id}) catch return;
     defer ctx.allocator.free(path);
 
-    graph.delete(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to delete draft.");
+    graph.delete(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -212,13 +227,15 @@ pub fn handleAddAttachment(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}/attachments", .{draft_id}) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.post(ctx.allocator, ctx.io, token, path, json_buf.written()) catch {
-        ctx.sendResult("Failed to add attachment.");
+    const response = graph.post(ctx.allocator, ctx.io, token, path, json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    const attach_id = extractJsonId(ctx.allocator, response);
+    // See comment in handleCreateDraft for the intentional leak pattern.
+    const attach_id = json_util.extractId(ctx.allocator, response) orelse
+        (ctx.allocator.dupe(u8, "(unknown)") catch return);
     const msg = std.fmt.allocPrint(ctx.allocator, "Attachment '{s}' added. Attachment ID: {s}", .{ file_name, attach_id }) catch return;
     defer ctx.allocator.free(msg);
     ctx.sendResult(msg);
@@ -233,13 +250,18 @@ pub fn handleListAttachments(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}/attachments", .{draft_id}) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to list attachments.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &attachment_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No attachments on this draft.");
+    }
 }
 
 /// Remove an attachment from a draft email.
@@ -252,8 +274,8 @@ pub fn handleRemoveAttachment(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}/attachments/{s}", .{ draft_id, attachment_id }) catch return;
     defer ctx.allocator.free(path);
 
-    graph.delete(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to remove attachment.");
+    graph.delete(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -264,25 +286,4 @@ pub fn handleRemoveAttachment(ctx: ToolContext) void {
 // Helpers
 // ---------------------------------------------------------------
 
-/// Extract the top-level "id" field from a JSON response string.
-/// Returns a newly-allocated string the caller must free (or the static
-/// literal "(unknown)" on any failure, which must NOT be freed — the caller
-/// is responsible for knowing the difference; currently every caller leaks
-/// this result, which is acceptable for tool-response strings that live the
-/// length of one JSON-RPC turn).
-fn extractJsonId(allocator: std.mem.Allocator, json_text: []const u8) []const u8 {
-    const parsed = std.json.parseFromSlice(Value, allocator, json_text, .{}) catch return "(unknown)";
-    defer parsed.deinit();
-    const id_val = switch (parsed.value) {
-        .object => |o| o.get("id") orelse return "(unknown)",
-        else => return "(unknown)",
-    };
-    const id_str = switch (id_val) {
-        .string => |s| s,
-        else => return "(unknown)",
-    };
-    // id_str points into parsed's arena which defer-frees at scope end.
-    // Duplicate it so the caller sees a stable pointer.
-    return allocator.dupe(u8, id_str) catch "(unknown)";
-}
 

@@ -17,7 +17,26 @@ const graph = @import("../graph.zig");
 const url_util = @import("../url.zig");
 const json_rpc = @import("../json_rpc.zig");
 const mime = @import("../mime.zig");
+const json_util = @import("../json_util.zig");
+const formatter = @import("../formatter.zig");
+const binary_download = @import("../binary_download.zig");
 const ToolContext = @import("context.zig").ToolContext;
+
+const sp_site_fields = [_]formatter.FieldSpec{
+    .{ .path = "displayName", .label = "name" },
+    .{ .path = "name", .label = "urlName" },
+};
+
+const sp_drive_fields = [_]formatter.FieldSpec{
+    .{ .path = "name", .label = "name" },
+    .{ .path = "driveType", .label = "type" },
+};
+
+const sp_item_fields = [_]formatter.FieldSpec{
+    .{ .path = "name", .label = "name" },
+    .{ .path = "size", .label = "size" }, // number — skipped by formatter (only strings resolve), keeping for future
+    .{ .path = "lastModifiedDateTime", .label = "modified" },
+};
 
 const Value = std.json.Value;
 const ObjectMap = std.json.ObjectMap;
@@ -78,13 +97,18 @@ pub fn handleSearchSites(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/sites?search={s}&$select=id,name,displayName,webUrl", .{encoded_query}) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to search SharePoint sites.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &sp_site_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No SharePoint sites matched that query.");
+    }
 }
 
 /// List document libraries (drives) in a SharePoint site.
@@ -96,13 +120,18 @@ pub fn handleListDrives(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/sites/{s}/drives?$select=id,name,webUrl,driveType", .{site_id}) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to list SharePoint drives.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &sp_drive_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No drives in this site.");
+    }
 }
 
 /// List items (files + folders) at a path inside a drive.
@@ -124,13 +153,18 @@ pub fn handleListItems(ctx: ToolContext) void {
     } else std.fmt.allocPrint(ctx.allocator, "/sites/{s}/drives/{s}/root/children", .{ site_id, drive_id }) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to list SharePoint items.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &sp_item_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("Folder is empty.");
+    }
 }
 
 // --- Upload tools ---
@@ -223,8 +257,8 @@ fn uploadSimple(
     const path = std.fmt.allocPrint(ctx.allocator, "/sites/{s}/drives/{s}/root:/{s}:/content", .{ site_id, drive_id, escaped }) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.put(ctx.allocator, ctx.io, token, path, data, content_type) catch {
-        ctx.sendResult("Failed to upload file to SharePoint.");
+    const response = graph.put(ctx.allocator, ctx.io, token, path, data, content_type) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -260,13 +294,13 @@ fn uploadChunked(
         \\{"item":{"@microsoft.graph.conflictBehavior":"replace"}}
     ;
 
-    const session_resp = graph.post(ctx.allocator, ctx.io, token, session_path, session_body) catch {
-        ctx.sendResult("Failed to create SharePoint upload session.");
+    const session_resp = graph.post(ctx.allocator, ctx.io, token, session_path, session_body) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(session_resp);
 
-    const upload_url = extractStringField(ctx.allocator, session_resp, "uploadUrl") orelse {
+    const upload_url = json_util.extractString(ctx.allocator, session_resp, "uploadUrl") orelse {
         const err_msg = std.fmt.allocPrint(ctx.allocator, "Upload session response missing uploadUrl: {s}", .{session_resp}) catch return;
         defer ctx.allocator.free(err_msg);
         ctx.sendResult(err_msg);
@@ -293,8 +327,8 @@ fn uploadChunked(
         ) catch return;
         defer ctx.allocator.free(range);
 
-        const chunk_resp = graph.putChunk(ctx.allocator, ctx.io, upload_url, chunk, range) catch {
-            ctx.sendResult("Failed to upload chunk to SharePoint.");
+        const chunk_resp = graph.putChunk(ctx.allocator, ctx.io, upload_url, chunk, range) catch |err| {
+            ctx.sendGraphError(err);
             return;
         };
         // Replace last_response each iteration — only the final chunk's
@@ -356,8 +390,8 @@ pub fn handleCreateFolder(ctx: ToolContext) void {
     defer json_buf.deinit();
     std.json.Stringify.value(Value{ .object = body }, .{}, &json_buf.writer) catch return;
 
-    const response = graph.post(ctx.allocator, ctx.io, token, endpoint, json_buf.written()) catch {
-        ctx.sendResult("Failed to create SharePoint folder.");
+    const response = graph.post(ctx.allocator, ctx.io, token, endpoint, json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -399,8 +433,8 @@ pub fn handleDeleteItem(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(endpoint);
 
-    graph.delete(ctx.allocator, ctx.io, token, endpoint) catch {
-        ctx.sendResult("Failed to delete SharePoint item.");
+    graph.delete(ctx.allocator, ctx.io, token, endpoint) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -442,29 +476,39 @@ pub fn handleDownloadFile(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(endpoint);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, endpoint) catch {
-        ctx.sendResult("Failed to download SharePoint file.");
+    const response = graph.get(ctx.allocator, ctx.io, token, endpoint) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    // Derive a suggested filename from the last segment of the SharePoint
+    // path. For itemId lookups we don't know the name up-front; fall back
+    // to the generic sanitizeName default by passing an empty string.
+    const suggested_name = if (sp_path) |p| blk: {
+        if (std.mem.lastIndexOfScalar(u8, p, '/')) |i| break :blk p[i + 1 ..];
+        break :blk p;
+    } else "";
+
+    const local_path = binary_download.saveToTempFile(
+        ctx.allocator,
+        ctx.io,
+        suggested_name,
+        response,
+    ) catch {
+        ctx.sendResult("Failed to write downloaded file to a temp path.");
+        return;
+    };
+    defer ctx.allocator.free(local_path);
+
+    // Pipe-delimited key:value format: easy for the LLM to parse; easy
+    // for a human to read in the chat UI.
+    const msg = std.fmt.allocPrint(
+        ctx.allocator,
+        "Downloaded {d} bytes | local_path: {s}",
+        .{ response.len, local_path },
+    ) catch return;
+    defer ctx.allocator.free(msg);
+    ctx.sendResult(msg);
 }
 
-/// Extract a top-level string field from a JSON response body.
-/// Returns a newly-allocated copy (or null on any parse / shape failure) —
-/// caller owns the result.
-fn extractStringField(allocator: std.mem.Allocator, json_text: []const u8, key: []const u8) ?[]u8 {
-    const parsed = std.json.parseFromSlice(Value, allocator, json_text, .{}) catch return null;
-    defer parsed.deinit();
-    const obj = switch (parsed.value) {
-        .object => |o| o,
-        else => return null,
-    };
-    const val = obj.get(key) orelse return null;
-    const s = switch (val) {
-        .string => |str| str,
-        else => return null,
-    };
-    return allocator.dupe(u8, s) catch null;
-}

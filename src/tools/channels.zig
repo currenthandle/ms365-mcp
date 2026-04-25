@@ -4,9 +4,25 @@ const std = @import("std");
 const types = @import("../types.zig");
 const graph = @import("../graph.zig");
 const json_rpc = @import("../json_rpc.zig");
+const formatter = @import("../formatter.zig");
 const ToolContext = @import("context.zig").ToolContext;
 
 const ObjectMap = std.json.ObjectMap;
+
+// Fields we surface from /me/joinedTeams and /teams/{id}/channels.
+// Both endpoints return items shaped `{id, displayName, description, ...}`.
+const team_or_channel_fields = [_]formatter.FieldSpec{
+    .{ .path = "displayName", .label = "name" },
+    .{ .path = "description", .label = "desc" },
+};
+
+// Fields surfaced from channel messages + replies (same shape for both).
+const channel_message_fields = [_]formatter.FieldSpec{
+    .{ .path = "createdDateTime", .label = "sent" },
+    .{ .path = "from.user.displayName", .label = "from" },
+    .{ .path = "subject", .label = "subject" },
+    .{ .path = "body.content", .label = "body", .newline_after = true },
+};
 
 /// Everything every channel-scoped handler needs: an auth token plus a
 /// team+channel ID pair extracted from the tool arguments.
@@ -32,13 +48,18 @@ fn authAndChannel(ctx: ToolContext, missing_args_msg: []const u8) ?ChannelAuth {
 pub fn handleListTeams(ctx: ToolContext) void {
     const token = ctx.requireAuth() orelse return;
 
-    const response = graph.get(ctx.allocator, ctx.io, token, "/me/joinedTeams?$select=id,displayName,description") catch {
-        ctx.sendResult("Failed to fetch teams.");
+    const response = graph.get(ctx.allocator, ctx.io, token, "/me/joinedTeams?$select=id,displayName,description") catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(buildSummary(ctx, response) orelse "No teams found.");
+    if (formatter.summarizeArray(ctx.allocator, response, &team_or_channel_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No teams found.");
+    }
 }
 
 /// List channels in a Team.
@@ -50,13 +71,18 @@ pub fn handleListChannels(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels?$select=id,displayName,description", .{team_id}) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to fetch channels.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(buildSummary(ctx, response) orelse "No channels found.");
+    if (formatter.summarizeArray(ctx.allocator, response, &team_or_channel_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No channels found.");
+    }
 }
 
 /// List messages (posts) in a Teams channel.
@@ -78,13 +104,18 @@ pub fn handleListChannelMessages(ctx: ToolContext) void {
     };
     defer if (page_token == null) ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to fetch channel messages.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &channel_message_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No messages in this channel.");
+    }
 }
 
 /// Get replies to a specific message thread in a Teams channel.
@@ -107,13 +138,18 @@ pub fn handleGetChannelMessageReplies(ctx: ToolContext) void {
     };
     defer if (page_token == null) ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to fetch message replies.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &channel_message_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No replies to this message.");
+    }
 }
 
 /// Post a new top-level message to a Teams channel. Supports @mentions and optional subject.
@@ -134,10 +170,15 @@ pub fn handlePostChannelMessage(ctx: ToolContext) void {
     if (mentions_str) |mentions_raw| {
         buildMentionedMessage(ctx.allocator, w, message, mentions_raw, subject);
     } else {
-        const html_content = types.htmlAutoLink(ctx.allocator, message) orelse message;
-        defer if (html_content.ptr != message.ptr) ctx.allocator.free(html_content);
+        // format=html trusts caller-supplied HTML as-is. format=text
+        // (default) HTML-escapes + auto-links URLs + converts \n to <br>.
+        const format = json_rpc.getStringArg(ch.args, "format") orelse "text";
+        const is_html = std.mem.eql(u8, format, "html");
+        const content = if (is_html) message else (types.htmlAutoLink(ctx.allocator, message) orelse message);
+        defer if (!is_html and content.ptr != message.ptr) ctx.allocator.free(content);
+
         w.writeAll("{\"body\":{\"contentType\":\"html\",\"content\":") catch return;
-        std.json.Stringify.encodeJsonString(html_content, .{}, w) catch return;
+        std.json.Stringify.encodeJsonString(content, .{}, w) catch return;
         w.writeAll("}") catch return;
         if (subject) |subj| {
             w.writeAll(",\"subject\":") catch return;
@@ -146,8 +187,8 @@ pub fn handlePostChannelMessage(ctx: ToolContext) void {
         w.writeAll("}") catch return;
     }
 
-    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, json_buf.written()) catch {
-        ctx.sendResult("Failed to post channel message.");
+    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -172,15 +213,17 @@ pub fn handleReplyToChannelMessage(ctx: ToolContext) void {
     if (mentions_str) |mentions_raw| {
         buildMentionedMessage(ctx.allocator, w, message, mentions_raw, null);
     } else {
-        // No mentions — send as HTML with auto-linked URLs.
-        const html_content = types.htmlAutoLink(ctx.allocator, message) orelse message;
-        defer if (html_content.ptr != message.ptr) ctx.allocator.free(html_content);
-        const body = types.ChatMessageRequest{ .body = .{ .content = html_content } };
+        // format=html trusts the caller's HTML; text (default) auto-escapes + links.
+        const format = json_rpc.getStringArg(ch.args, "format") orelse "text";
+        const is_html = std.mem.eql(u8, format, "html");
+        const content = if (is_html) message else (types.htmlAutoLink(ctx.allocator, message) orelse message);
+        defer if (!is_html and content.ptr != message.ptr) ctx.allocator.free(content);
+        const body = types.ChatMessageRequest{ .body = .{ .content = content } };
         std.json.Stringify.value(body, .{}, w) catch return;
     }
 
-    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, json_buf.written()) catch {
-        ctx.sendResult("Failed to send reply.");
+    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -195,8 +238,8 @@ pub fn handleDeleteChannelMessage(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/softDelete", .{ ch.team_id, ch.channel_id, message_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, "{}") catch {
-        ctx.sendResult("Failed to delete channel message.");
+    graph.postNoContent(ctx.allocator, ctx.io, ch.token, path, "{}") catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -212,8 +255,8 @@ pub fn handleDeleteChannelReply(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels/{s}/messages/{s}/replies/{s}/softDelete", .{ ch.team_id, ch.channel_id, message_id, reply_id }) catch return;
     defer ctx.allocator.free(path);
 
-    _ = graph.post(ctx.allocator, ctx.io, ch.token, path, "{}") catch {
-        ctx.sendResult("Failed to delete channel reply.");
+    graph.postNoContent(ctx.allocator, ctx.io, ch.token, path, "{}") catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -223,41 +266,6 @@ pub fn handleDeleteChannelReply(ctx: ToolContext) void {
 // ---------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------
-
-/// Build a condensed one-line-per-item summary from a Graph API response
-/// containing a "value" array with objects that have displayName, description, and id.
-fn buildSummary(ctx: ToolContext, response: []const u8) ?[]const u8 {
-    const parsed = std.json.parseFromSlice(std.json.Value, ctx.allocator, response, .{}) catch return null;
-    defer parsed.deinit();
-
-    const items = switch (parsed.value) {
-        .object => |o| switch (o.get("value") orelse return null) {
-            .array => |a| a.items,
-            else => return null,
-        },
-        else => return null,
-    };
-
-    var buf: std.Io.Writer.Allocating = .init(ctx.allocator);
-    defer buf.deinit();
-    const w = &buf.writer;
-
-    for (items) |item| {
-        const obj = switch (item) { .object => |o| o, else => continue };
-        const name = switch (obj.get("displayName") orelse continue) { .string => |s| s, else => continue };
-        const id = switch (obj.get("id") orelse continue) { .string => |s| s, else => continue };
-        const desc = switch (obj.get("description") orelse .null) { .string => |s| s, else => "" };
-
-        if (desc.len > 0) {
-            w.print("{s} — {s} — id: {s}\n", .{ name, desc, id }) catch continue;
-        } else {
-            w.print("{s} — id: {s}\n", .{ name, id }) catch continue;
-        }
-    }
-
-    const summary = buf.written();
-    return if (summary.len > 0) summary else null;
-}
 
 /// Write a text segment as HTML, converting newlines to <br>,
 /// wrapping URLs in <a> tags, and HTML-escaping all text.
@@ -471,21 +479,17 @@ test "buildMentionedMessage unmatched @ preserved" {
     try std.testing.expect(std.mem.indexOf(u8, result, "@unknown") != null);
 }
 
-test "buildSummary formats teams/channels" {
-    const allocator = std.testing.allocator;
-    const ctx = ToolContext{
-        .allocator = allocator,
-        .io = undefined,
-        .raw_message = undefined,
-    };
-
+test "teams/channels summary via formatter" {
     const response =
         \\{"value":[{"displayName":"Team A","id":"id-a","description":"Desc A"},{"displayName":"Team B","id":"id-b","description":""}]}
     ;
-    const result = buildSummary(ctx, response);
-    try std.testing.expect(result != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.?, "Team A — Desc A — id: id-a") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.?, "Team B — id: id-b") != null);
+    const result = formatter.summarizeArray(std.testing.allocator, response, &team_or_channel_fields).?;
+    defer std.testing.allocator.free(result);
+    try std.testing.expect(std.mem.indexOf(u8, result, "name: Team A") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "desc: Desc A") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "id: id-a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "name: Team B") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "id: id-b") != null);
 }
 
 test "writeHtmlLinked escapes HTML and links URLs" {
