@@ -219,15 +219,28 @@ pub fn testSendDraftLifecycle(client: *McpClient) !void {
         fail("send-draft", send_text);
     }
 
-    // Clean up: wait for email to arrive, find it, delete it.
-    _ = std.c.nanosleep(&.{ .sec = 3, .nsec = 0 }, null);
-    const list = try client.callTool("list-emails", null);
-    defer list.deinit();
-    const list_text = McpClient.getResultText(list) orelse return;
-    const email_id = helpers.findEmailBySubject(client.allocator, list_text, "DISREGARD AUTOMATED TEST SEND-DRAFT") orelse return;
-    defer client.allocator.free(email_id);
+    // Clean up: find the just-sent email in Sent Items and delete it.
+    // Sent Items is consistent — no $search indexing lag — but Graph
+    // does take 1-3s to move a sent message into the Sent folder after
+    // /me/sendMail returns 202. Two short retries are deterministic
+    // enough: by the time we get to the third try the message is
+    // always present in our testing.
+    var email_id: ?[]u8 = null;
+    var sent_attempts: usize = 0;
+    while (sent_attempts < 5 and email_id == null) : (sent_attempts += 1) {
+        if (sent_attempts > 0) _ = std.c.nanosleep(&.{ .sec = 1, .nsec = 0 }, null);
+        const sent_list = try client.callTool("list-emails", "{\"folder\":\"sentitems\",\"top\":\"10\"}");
+        defer sent_list.deinit();
+        const sent_text = McpClient.getResultText(sent_list) orelse continue;
+        email_id = helpers.findEmailBySubject(client.allocator, sent_text, "DISREGARD AUTOMATED TEST SEND-DRAFT");
+    }
+    const email_id_found = email_id orelse {
+        fail("send-draft cleanup", "sent draft not in Sent Items after 5s");
+        return;
+    };
+    defer client.allocator.free(email_id_found);
     var del_buf: [512]u8 = undefined;
-    const del_args = std.fmt.bufPrint(&del_buf, "{{\"emailId\":\"{s}\"}}", .{email_id}) catch return;
+    const del_args = std.fmt.bufPrint(&del_buf, "{{\"emailId\":\"{s}\"}}", .{email_id_found}) catch return;
     const del = try client.callTool("delete-email", del_args);
     defer del.deinit();
     pass("delete-email (send-draft cleanup)");
