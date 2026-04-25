@@ -195,6 +195,9 @@ pub fn main() !void {
         std.debug.print("\n\x1b[1mCross-tool journeys:\x1b[0m\n", .{});
         try cases.testChatJourneySearchAndSend(&client);
         try cases.testBatchDeleteEmails(&client);
+        try cases.testEmailJourney(&client);
+        try cases.testCalendarJourney(&client);
+        try cases.testSharePointJourney(&client);
         assertAlive(&client, "journeys");
     }
 
