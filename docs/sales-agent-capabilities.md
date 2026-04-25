@@ -69,6 +69,13 @@ since March has been about making the agent *trustable* end-to-end.
   Microsoft Search index directly, so the agent can find a message from
   three months ago instead of being limited to the last few weeks the
   chat-list endpoint actually returns.
+- **Find anything by name (4 new search tools)** — `search-channels`
+  finds a Teams channel across every team you've joined; `search-chats`
+  finds a 1:1 or group chat by participant or topic; `search-sharepoint-
+  files` and `search-onedrive-files` find files by name or content
+  without needing the folder path. The agent can now act on a request
+  like *"post in the General channel"* in one step instead of guessing
+  which team it lives in.
 - **Batch operations** — `batch-delete-emails` lets the agent clean up a
   search result set in one call instead of N. Less chatter, faster work.
 - **PDFs, images, and videos download cleanly.** Before, asking the agent
@@ -123,9 +130,9 @@ since March has been about making the agent *trustable* end-to-end.
 
 | Thing | Value |
 |---|---|
-| Tools available to the agent | **63** (was 30 in March) |
-| End-to-end tests against live Graph | **85 of 85**, no mocks (was 51) |
-| Cross-tool user journeys covered | **6** (was 0) |
+| Tools available to the agent | **67** (was 30 in March) |
+| End-to-end tests against live Graph | **94 of 94**, no mocks (was 51) |
+| Cross-tool user journeys covered | **7** (was 0) |
 | `list-emails` payload to model | **4.2 KB** (was 31 KB raw → **87% reduction**) |
 | Tokens per `list-emails` call | **~1,050** (was ~7,800) |
 | Inbox snapshots an agent can hold (200K context) | **~50** (was ~6) |
@@ -175,7 +182,7 @@ parts the agent does while you're on the call with the actual customer.
 
 ---
 
-## Appendix — the full tool list (63 tools; developer reference)
+## Appendix — the full tool list (67 tools; developer reference)
 
 - **Auth & session** (4): login, verify-login, get-mailbox-settings, sync-timezone
 - **Email** (15): list-emails, read-email, send-email, reply-email,
@@ -188,14 +195,16 @@ parts the agent does while you're on the call with the actual customer.
 - **Calendar** (8): create-calendar-event, list-calendar-events,
   get-calendar-event, update-calendar-event, delete-calendar-event,
   find-meeting-times, get-schedule, respond-to-event
-- **Chat** (6): list-chats, list-chat-messages, search-chat-messages,
+- **Chat** (7): list-chats, search-chats, list-chat-messages, search-chat-messages,
   send-chat-message, create-chat, delete-chat-message
-- **Channels** (8): list-teams, list-channels, list-channel-messages,
-  get-channel-message-replies, post-channel-message,
+- **Channels** (9): list-teams, list-channels, search-channels,
+  list-channel-messages, get-channel-message-replies, post-channel-message,
   reply-to-channel-message, delete-channel-message, delete-channel-reply
-- **SharePoint** (8): search-sharepoint-sites, list-sharepoint-drives,
-  list-sharepoint-items, upload-sharepoint-file, upload-sharepoint-content,
-  create-sharepoint-folder, delete-sharepoint-item, download-sharepoint-file
-- **OneDrive** (5): list-onedrive-items, upload-onedrive-file,
-  upload-onedrive-content, download-onedrive-file, delete-onedrive-item
+- **SharePoint** (9): search-sharepoint-sites, list-sharepoint-drives,
+  list-sharepoint-items, search-sharepoint-files, upload-sharepoint-file,
+  upload-sharepoint-content, create-sharepoint-folder,
+  delete-sharepoint-item, download-sharepoint-file
+- **OneDrive** (6): list-onedrive-items, search-onedrive-files,
+  upload-onedrive-file, upload-onedrive-content, download-onedrive-file,
+  delete-onedrive-item
 - **Utility** (2): search-users, get-profile

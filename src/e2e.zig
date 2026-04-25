@@ -188,6 +188,7 @@ pub fn main() !void {
     if (shouldRun("chat")) {
         std.debug.print("\n\x1b[1mLifecycle — Chat:\x1b[0m\n", .{});
         try cases.testChatMessageLifecycle(&client);
+        try cases.testSearchChats(&client);
         assertAlive(&client, "chat lifecycle");
     }
 
@@ -195,6 +196,7 @@ pub fn main() !void {
         std.debug.print("\n\x1b[1mCross-tool journeys:\x1b[0m\n", .{});
         try cases.testChatJourneySearchAndSend(&client);
         try cases.testBatchDeleteEmails(&client);
+        try cases.testDiscoveryJourneyChannelByName(&client);
         assertAlive(&client, "journeys");
     }
 
@@ -202,6 +204,8 @@ pub fn main() !void {
         std.debug.print("\n\x1b[1mLifecycle — Channels:\x1b[0m\n", .{});
         try cases.testChannelLifecycle(&client);
         try cases.testReplyToChannelMessage(&client);
+        try cases.testSearchChannels(&client);
+        try cases.testListChannelsQueryFilter(&client);
         assertAlive(&client, "channels lifecycle");
     }
 
@@ -212,6 +216,8 @@ pub fn main() !void {
         try cases.testSharePointLargeUpload(&client);
         try cases.testSharePointItemIdTargeting(&client);
         try cases.testSharePointPathValidation(&client);
+        try cases.testSearchSharepointFiles(&client);
+        try cases.testSearchOnedriveFiles(&client);
     }
 
     // --- Summary ---

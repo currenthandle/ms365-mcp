@@ -140,3 +140,31 @@ pub fn testChatMessageLifecycle(client: *McpClient) !void {
         fail("delete-chat-message verify", "deleted message still visible in list after 5s");
     }
 }
+
+/// Tool-level test: search-chats finds a chat by participant name.
+/// Uses E2E_ATTENDEE_REQUIRED — the chat lifecycle test above opens a
+/// 1:1 chat with that recipient and Teams keeps the chat row even after
+/// the test message is softDeleted, so search-chats should find it on
+/// subsequent runs.
+pub fn testSearchChats(client: *McpClient) !void {
+    const recipient = std.mem.span(std.c.getenv("E2E_ATTENDEE_REQUIRED").?);
+    const dot = std.mem.indexOfScalar(u8, recipient, '.') orelse recipient.len;
+    const first_name = recipient[0..dot];
+
+    var args_buf: [512]u8 = undefined;
+    const args = std.fmt.bufPrint(&args_buf, "{{\"query\":\"{s}\"}}", .{first_name}) catch return;
+    const search = try client.callTool("search-chats", args);
+    defer search.deinit();
+    const text = McpClient.getResultText(search) orelse {
+        fail("search-chats", "no text");
+        return;
+    };
+
+    if (std.mem.indexOf(u8, text, "id:") != null and shared.containsIgnoreCase(text, first_name)) {
+        pass("search-chats found chat with recipient");
+    } else if (std.mem.indexOf(u8, text, "No chats matched") != null) {
+        skip("search-chats", "no chat with E2E_ATTENDEE_REQUIRED — run chat lifecycle first");
+    } else {
+        fail("search-chats", text);
+    }
+}

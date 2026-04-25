@@ -186,7 +186,34 @@ const search_chat_msgs_props = [_]PropSpec{
     .{ .name = "from", .type = "string", .description = "Optional result offset for pagination (default 0)" },
 };
 
-const list_channels_props = [_]PropSpec{team_id_prop};
+const search_chats_props = [_]PropSpec{
+    .{ .name = "query", .type = "string", .description = "Member name or topic fragment to match. Case-insensitive." },
+    .{ .name = "top", .type = "string", .description = "Optional max matches to return (default 10)." },
+    .{ .name = "maxScan", .type = "string", .description = "Optional cap on how many chats to scan before giving up (default 200). Increase for users with hundreds of chats." },
+};
+
+const list_channels_props = [_]PropSpec{
+    team_id_prop,
+    .{ .name = "query", .type = "string", .description = "Optional name fragment — filters channels case-insensitively in-process. Useful when a team has 100+ channels." },
+    .{ .name = "top", .type = "string", .description = "Optional cap on how many channels to return (default 50)." },
+};
+
+const search_channels_props = [_]PropSpec{
+    .{ .name = "query", .type = "string", .description = "Channel name fragment to match. Case-insensitive." },
+    .{ .name = "top", .type = "string", .description = "Optional max matches to return across all teams (default 10). Pass '1' if you only need to find one channel — the walk short-circuits as soon as the cap is met, saving Graph round-trips." },
+};
+
+const search_sharepoint_files_props = [_]PropSpec{
+    .{ .name = "query", .type = "string", .description = "Filename fragment or content keyword to search for." },
+    .{ .name = "size", .type = "string", .description = "Optional max results to return (default 25)." },
+    .{ .name = "from", .type = "string", .description = "Optional result offset for pagination (default 0)." },
+};
+
+const search_onedrive_files_props = [_]PropSpec{
+    .{ .name = "query", .type = "string", .description = "Filename fragment or content keyword to search for in your personal OneDrive." },
+    .{ .name = "size", .type = "string", .description = "Optional max results to return (default 25)." },
+    .{ .name = "from", .type = "string", .description = "Optional result offset for pagination (default 0)." },
+};
 
 const list_chan_msgs_props = [_]PropSpec{
     team_id_prop,
@@ -560,18 +587,24 @@ const all_tools = [_]ToolSpec{
     // --- Teams Chat ---
     .{
         .name = "list-chats",
-        .description = "List Microsoft Teams chats including 1:1 conversations, group chats, and meeting chats. Supports pagination — pass the nextLink from the response as pageToken to get the next page. Use 'top' to control page size (1-50, default 50).",
+        .description = "List Microsoft Teams chats including 1:1 conversations, group chats, and meeting chats. To find a specific chat by participant name or topic, prefer search-chats. Supports pagination — pass the nextLink from the response as pageToken to get the next page. Use 'top' to control page size (1-50, default 50).",
         .props = &list_chats_props,
     },
     .{
+        .name = "search-chats",
+        .description = "Find a Teams chat by participant name or topic, walking your chat list and filtering case-insensitively. Use this when you know the person but not the chatId — e.g. 'find my 1:1 with Marcus' or 'find the group chat about pricing'. Returns chats with their participants, type, and chatId for follow-up calls like send-chat-message.",
+        .props = &search_chats_props,
+        .required = &.{"query"},
+    },
+    .{
         .name = "list-chat-messages",
-        .description = "List messages in a Microsoft Teams chat by chat ID. Supports pagination — pass the nextLink from the response as pageToken to get the next page. Use 'top' to control page size (1-50, default 50).",
+        .description = "List messages in a Microsoft Teams chat by chat ID. Use search-chats first if you don't already have the chatId. Supports pagination via pageToken. Use 'top' to control page size (1-50, default 50).",
         .props = &chat_msgs_props,
         .required = &.{"chatId"},
     },
     .{
         .name = "send-chat-message",
-        .description = "Send a message in a Microsoft Teams chat.",
+        .description = "Send a message in a Microsoft Teams chat. If you don't already have the chatId, call search-chats (by participant name or topic) or create-chat (for a new 1:1) first.",
         .props = &send_chat_props,
         .required = &.{ "chatId", "message" },
     },
@@ -590,17 +623,23 @@ const all_tools = [_]ToolSpec{
     // --- Teams Channels ---
     .{
         .name = "list-teams",
-        .description = "List Microsoft Teams teams you are a member of. Returns team names and IDs. Use this to find a team before listing its channels.",
+        .description = "List Microsoft Teams teams you are a member of. Returns team names and IDs. To find a specific channel by name, prefer search-channels — it walks every team for you instead of forcing a list-teams + list-channels manual lookup.",
     },
     .{
         .name = "list-channels",
-        .description = "List channels in a Microsoft Teams team. Returns channel names and IDs. Use list-teams first to get the teamId.",
+        .description = "List channels in a Microsoft Teams team. Returns channel names and IDs. Optional 'query' filters channels by name fragment in-process (useful for teams with 100+ channels). To find a channel by name without knowing its team, use search-channels instead.",
         .props = &list_channels_props,
         .required = &.{"teamId"},
     },
     .{
+        .name = "search-channels",
+        .description = "Find a Microsoft Teams channel by name fragment across every team you've joined. Returns channel name, parent team name, and the teamId+channelId pair you need for post-channel-message or reply-to-channel-message. Use this whenever you know a channel name but not its team.",
+        .props = &search_channels_props,
+        .required = &.{"query"},
+    },
+    .{
         .name = "list-channel-messages",
-        .description = "List top-level posts in a Microsoft Teams channel. Returns posts only, NOT replies — use get-channel-message-replies to read replies to a specific post. Supports pagination via pageToken. Use 'top' to control page size (1-50, default 50).",
+        .description = "List top-level posts in a Microsoft Teams channel. Returns posts only, NOT replies — use get-channel-message-replies to read replies to a specific post. To search posts and replies by content, use search-chat-messages (Graph indexes channel messages and chat messages together). Supports pagination via pageToken. Use 'top' to control page size (1-50, default 50).",
         .props = &list_chan_msgs_props,
         .required = &.{ "teamId", "channelId" },
     },
@@ -612,13 +651,13 @@ const all_tools = [_]ToolSpec{
     },
     .{
         .name = "post-channel-message",
-        .description = "Post a new message to a Microsoft Teams channel. Supports @mentions and an optional subject line. Use list-teams then list-channels to get the IDs.",
+        .description = "Post a new message to a Microsoft Teams channel. Supports @mentions and an optional subject line. If you only know the channel by name, call search-channels first to get the teamId+channelId pair in one step.",
         .props = &post_chan_props,
         .required = &.{ "teamId", "channelId", "message" },
     },
     .{
         .name = "reply-to-channel-message",
-        .description = "Reply to a message thread in a Microsoft Teams channel. Supports @mentions — pass the mentions parameter with 'DisplayName|userId' pairs and use @Name in the message text. Get user IDs from the from.user.id field in channel message replies.",
+        .description = "Reply to a message thread in a Microsoft Teams channel. Supports @mentions — pass the mentions parameter with 'DisplayName|userId' pairs and use @Name in the message text. Get user IDs from the from.user.id field in channel message replies. If you only know the channel by name, call search-channels first to get teamId+channelId.",
         .props = &chan_reply_props,
         .required = &.{ "teamId", "channelId", "messageId", "message" },
     },
@@ -668,9 +707,15 @@ const all_tools = [_]ToolSpec{
     },
     .{
         .name = "list-sharepoint-items",
-        .description = "List files and folders inside a SharePoint drive. Omit folderPath to list the drive root, or pass a path like '2026/Q1' to list a sub-folder. Returns item IDs, names, sizes, and types.",
+        .description = "List files and folders inside a SharePoint drive. Omit folderPath to list the drive root, or pass a path like '2026/Q1' to list a sub-folder. To find a file by name without knowing its folder, use search-sharepoint-files instead.",
         .props = &sp_list_items_props,
         .required = &.{ "siteId", "driveId" },
+    },
+    .{
+        .name = "search-sharepoint-files",
+        .description = "Find a file across all SharePoint drives you can access using the Microsoft Search index. Returns name, parent path, driveId, itemId, and webUrl per match — everything you need for a follow-up download or delete. Use this when you know a filename or content keyword but not the site or folder.",
+        .props = &search_sharepoint_files_props,
+        .required = &.{"query"},
     },
     .{
         .name = "upload-sharepoint-file",
@@ -705,8 +750,14 @@ const all_tools = [_]ToolSpec{
     // --- OneDrive (personal) ---
     .{
         .name = "list-onedrive-items",
-        .description = "List files and folders in the signed-in user's personal OneDrive. Omit folderPath to list root.",
+        .description = "List files and folders in the signed-in user's personal OneDrive. Omit folderPath to list root. To find a file by name without knowing its folder, use search-onedrive-files instead.",
         .props = &od_list_items_props,
+    },
+    .{
+        .name = "search-onedrive-files",
+        .description = "Find a file in your personal OneDrive by name or content keyword using the Microsoft Search index. Returns name, parent path, itemId, and webUrl per match. Use this when you know a filename but not the folder path.",
+        .props = &search_onedrive_files_props,
+        .required = &.{"query"},
     },
     .{
         .name = "upload-onedrive-file",

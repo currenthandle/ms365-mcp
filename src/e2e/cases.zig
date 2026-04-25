@@ -56,10 +56,13 @@ pub const testEmailAttachmentDownload = email.testEmailAttachmentDownload;
 
 // Chat.
 pub const testChatMessageLifecycle = chat.testChatMessageLifecycle;
+pub const testSearchChats = chat.testSearchChats;
 
 // Channels.
 pub const testChannelLifecycle = channels.testChannelLifecycle;
 pub const testReplyToChannelMessage = channels.testReplyToChannelMessage;
+pub const testSearchChannels = channels.testSearchChannels;
+pub const testListChannelsQueryFilter = channels.testListChannelsQueryFilter;
 
 // SharePoint.
 pub const testSharePointLifecycle = sharepoint.testSharePointLifecycle;
@@ -67,6 +70,8 @@ pub const testSharePointFileUpload = sharepoint.testSharePointFileUpload;
 pub const testSharePointLargeUpload = sharepoint.testSharePointLargeUpload;
 pub const testSharePointItemIdTargeting = sharepoint.testSharePointItemIdTargeting;
 pub const testSharePointPathValidation = sharepoint.testSharePointPathValidation;
+pub const testSearchSharepointFiles = sharepoint.testSearchSharepointFiles;
+pub const testSearchOnedriveFiles = sharepoint.testSearchOnedriveFiles;
 
 // OneDrive.
 pub const testOneDriveLifecycle = onedrive.testOneDriveLifecycle;
@@ -74,3 +79,4 @@ pub const testOneDriveLifecycle = onedrive.testOneDriveLifecycle;
 // Cross-tool journeys.
 pub const testChatJourneySearchAndSend = journeys.testChatJourneySearchAndSend;
 pub const testBatchDeleteEmails = journeys.testBatchDeleteEmails;
+pub const testDiscoveryJourneyChannelByName = journeys.testDiscoveryJourneyChannelByName;

@@ -201,3 +201,101 @@ pub fn testBatchDeleteEmails(client: *McpClient) !void {
         fail("batch-delete-emails", batch_text);
     }
 }
+
+/// Discovery journey: an agent told only "post to the General channel"
+/// has to find the channel without knowing which team it's in. This
+/// chains search-channels → post-channel-message → list-channel-messages
+/// (verify post landed) → delete-channel-message (cleanup). It's the
+/// exact workflow the agent failed at when the channel had to be looked
+/// up by name and motivated this whole search-tools batch.
+pub fn testDiscoveryJourneyChannelByName(client: *McpClient) !void {
+    // Every Teams team has a "General" channel — built-in fixture. Cap
+    // results at 1 so the walk short-circuits at the first match instead
+    // of scanning all 13 teams when "general" matches in every one.
+    const search = try client.callTool("search-channels", "{\"query\":\"general\",\"top\":\"1\"}");
+    defer search.deinit();
+    const search_text = McpClient.getResultText(search) orelse {
+        fail("discovery-journey: search-channels", "no text");
+        return;
+    };
+
+    // search-channels output rows look like:
+    //   team: <name> | channel: <name> | teamId: <id> | channelId: <id>
+    const team_id = helpers.extractFirstValueField(client.allocator, search_text, "teamId") orelse {
+        fail("discovery-journey: search-channels", "no General channel found across joined teams");
+        return;
+    };
+    defer client.allocator.free(team_id);
+    const channel_id = helpers.extractFirstValueField(client.allocator, search_text, "channelId") orelse {
+        fail("discovery-journey: search-channels", "found team but no channelId");
+        return;
+    };
+    defer client.allocator.free(channel_id);
+    pass("discovery-journey: search-channels (found General by name)");
+
+    // Post a unique probe.
+    const probe_token = "E2E-DISCOVERY-JOURNEY-PROBE-9F2H";
+    var post_buf: [2048]u8 = undefined;
+    const post_args = std.fmt.bufPrint(
+        &post_buf,
+        "{{\"teamId\":\"{s}\",\"channelId\":\"{s}\",\"message\":\"[DISREGARD AUTOMATED TEST] {s}\"}}",
+        .{ team_id, channel_id, probe_token },
+    ) catch return;
+    const post = try client.callTool("post-channel-message", post_args);
+    defer post.deinit();
+    const post_text = McpClient.getResultText(post) orelse {
+        fail("discovery-journey: post-channel-message", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, post_text, "posted") == null and
+        std.mem.indexOf(u8, post_text, "sent") == null)
+    {
+        fail("discovery-journey: post-channel-message", post_text);
+        return;
+    }
+    pass("discovery-journey: post-channel-message");
+
+    // Verify it landed by polling list-channel-messages — Graph's read
+    // endpoint can lag the write by a few seconds.
+    var list_buf: [1024]u8 = undefined;
+    const list_args = std.fmt.bufPrint(
+        &list_buf,
+        "{{\"teamId\":\"{s}\",\"channelId\":\"{s}\",\"top\":\"10\"}}",
+        .{ team_id, channel_id },
+    ) catch return;
+
+    var msg_id: ?[]u8 = null;
+    var poll_attempts: usize = 0;
+    while (poll_attempts < 10 and msg_id == null) : (poll_attempts += 1) {
+        if (poll_attempts > 0) _ = std.c.nanosleep(&.{ .sec = 2, .nsec = 0 }, null);
+        const list = try client.callTool("list-channel-messages", list_args);
+        defer list.deinit();
+        const list_text = McpClient.getResultText(list) orelse continue;
+        if (std.mem.indexOf(u8, list_text, probe_token) == null) continue;
+        msg_id = helpers.findMessageByContent(client.allocator, list_text, probe_token);
+    }
+    const msg_id_owned = msg_id orelse {
+        fail("discovery-journey: verify", "probe not found in channel-messages within 20s");
+        return;
+    };
+    defer client.allocator.free(msg_id_owned);
+    pass("discovery-journey: probe visible in list-channel-messages");
+
+    var del_buf: [1024]u8 = undefined;
+    const del_args = std.fmt.bufPrint(
+        &del_buf,
+        "{{\"teamId\":\"{s}\",\"channelId\":\"{s}\",\"messageId\":\"{s}\"}}",
+        .{ team_id, channel_id, msg_id_owned },
+    ) catch return;
+    const del = try client.callTool("delete-channel-message", del_args);
+    defer del.deinit();
+    const del_text = McpClient.getResultText(del) orelse {
+        fail("discovery-journey: delete-channel-message", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, del_text, "deleted") != null) {
+        pass("discovery-journey: delete-channel-message");
+    } else {
+        fail("discovery-journey: delete-channel-message", del_text);
+    }
+}

@@ -85,6 +85,7 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "remove-attachment", draft_tools.handleRemoveAttachment },
     // --- Chat ---
     .{ "list-chats", chat_tools.handleListChats },
+    .{ "search-chats", chat_tools.handleSearchChats },
     .{ "list-chat-messages", chat_tools.handleListChatMessages },
     .{ "send-chat-message", chat_tools.handleSendChatMessage },
     .{ "create-chat", chat_tools.handleCreateChat },
@@ -102,6 +103,7 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     // --- Teams channels ---
     .{ "list-teams", channel_tools.handleListTeams },
     .{ "list-channels", channel_tools.handleListChannels },
+    .{ "search-channels", channel_tools.handleSearchChannels },
     .{ "list-channel-messages", channel_tools.handleListChannelMessages },
     .{ "get-channel-message-replies", channel_tools.handleGetChannelMessageReplies },
     .{ "post-channel-message", channel_tools.handlePostChannelMessage },
@@ -112,6 +114,7 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "search-sharepoint-sites", sharepoint_tools.handleSearchSites },
     .{ "list-sharepoint-drives", sharepoint_tools.handleListDrives },
     .{ "list-sharepoint-items", sharepoint_tools.handleListItems },
+    .{ "search-sharepoint-files", sharepoint_tools.handleSearchFiles },
     .{ "upload-sharepoint-file", sharepoint_tools.handleUploadFile },
     .{ "upload-sharepoint-content", sharepoint_tools.handleUploadContent },
     .{ "create-sharepoint-folder", sharepoint_tools.handleCreateFolder },
@@ -119,6 +122,7 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "download-sharepoint-file", sharepoint_tools.handleDownloadFile },
     // --- OneDrive (personal) ---
     .{ "list-onedrive-items", onedrive_tools.handleListItems },
+    .{ "search-onedrive-files", sharepoint_tools.handleSearchOneDriveFiles },
     .{ "upload-onedrive-file", onedrive_tools.handleUploadFile },
     .{ "upload-onedrive-content", onedrive_tools.handleUploadContent },
     .{ "download-onedrive-file", onedrive_tools.handleDownloadFile },
