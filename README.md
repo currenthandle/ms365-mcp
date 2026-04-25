@@ -1,18 +1,28 @@
 # ms365-mcp
 
-A lightweight Microsoft 365 MCP server written in Zig. ~4.6k lines of code, ~5.7MB binary, no runtime dependencies.
+A lightweight Microsoft 365 MCP server written in Zig. ~7.7k lines of code, ~5.9 MB binary, no runtime dependencies.
 
-Exposes Microsoft Graph API functionality — Teams, Outlook, Calendar, SharePoint, and OneDrive — as MCP tools for use with LLM agents.
+Exposes Microsoft Graph API functionality — Teams, Outlook, Calendar, SharePoint, and OneDrive — as 63 MCP tools for use with LLM agents.
 
-**Non-technical readers:** see [docs/sales-agent-capabilities.md](docs/sales-agent-capabilities.md) for a one-page tour of what the tool unlocks for sales workflows.
+**Non-technical readers:** see [docs/sales-agent-capabilities.md](docs/sales-agent-capabilities.md) for a one-page tour of what the tool unlocks.
 
-## Install
+## Install (stable)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/currenthandle/ms365-mcp/main/install.sh | sh
 ```
 
-This downloads the right binary for your platform (macOS/Linux, ARM64/x86_64) to `~/.local/bin/ms365-mcp`.
+Downloads the right binary for your platform (macOS/Linux, ARM64/x86_64) to `~/.local/bin/ms365-mcp`.
+
+## Install (staging)
+
+To try in-progress features from the `staging` branch:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/currenthandle/ms365-mcp/staging/install-staging.sh | sh
+```
+
+The staging release is rebuilt automatically on every push to the `staging` branch by [`.github/workflows/staging.yml`](.github/workflows/staging.yml). It's a moving target — may break, may include features that haven't shipped to `main` yet.
 
 ## Setup
 
@@ -38,28 +48,40 @@ This downloads the right binary for your platform (macOS/Linux, ARM64/x86_64) to
 
 ## Tools
 
-**Email** — list-emails, read-email, send-email, delete-email, create-draft, send-draft, update-draft, delete-draft, add-attachment, list-attachments, remove-attachment
+**Email** (15) — list-emails, read-email, send-email, reply-email, reply-all-email, forward-email, search-emails, list-mail-folders, mark-read-email, move-email, list-email-attachments, read-email-attachment, download-email-attachment, delete-email, batch-delete-emails
 
-**Calendar** — list-calendar-events, get-calendar-event, create-calendar-event, update-calendar-event, delete-calendar-event
+**Drafts** (7) — create-draft, send-draft, update-draft, delete-draft, add-attachment, list-attachments, remove-attachment
 
-**Teams Chat** — list-chats, list-chat-messages, send-chat-message, create-chat, delete-chat-message
+**Calendar** (8) — list-calendar-events, get-calendar-event, create-calendar-event, update-calendar-event, delete-calendar-event, find-meeting-times, get-schedule, respond-to-event
 
-**Teams Channels** — list-teams, list-channels, list-channel-messages, get-channel-message-replies, reply-to-channel-message, delete-channel-message, delete-channel-reply
+**Teams Chat** (6) — list-chats, list-chat-messages, search-chat-messages, send-chat-message, create-chat, delete-chat-message
 
-**Users** — search-users, get-profile, get-mailbox-settings
+**Teams Channels** (8) — list-teams, list-channels, list-channel-messages, get-channel-message-replies, post-channel-message, reply-to-channel-message, delete-channel-message, delete-channel-reply
 
-**Auth** — login, verify-login, sync-timezone
+**SharePoint** (8) — search-sharepoint-sites, list-sharepoint-drives, list-sharepoint-items, upload-sharepoint-file, upload-sharepoint-content, create-sharepoint-folder, delete-sharepoint-item, download-sharepoint-file
+
+**OneDrive** (5) — list-onedrive-items, upload-onedrive-file, upload-onedrive-content, download-onedrive-file, delete-onedrive-item
+
+**Auth & utility** (6) — login, verify-login, get-mailbox-settings, sync-timezone, search-users, get-profile
 
 ## Build from source
 
-Requires [Zig](https://ziglang.org/) `0.16.0-dev.2736+3b515fbed` (nightly).
+Requires [Zig](https://ziglang.org/) `0.16.0`.
 
 ```sh
 zig build -Doptimize=ReleaseSafe
 ```
 
-Run tests:
+Run unit tests:
 
 ```sh
 zig build test
 ```
+
+Run the live-Graph end-to-end suite (85 tests; needs `MS365_CLIENT_ID` / `MS365_TENANT_ID` configured plus the `E2E_*` variables in `.env`):
+
+```sh
+zig build e2e
+```
+
+The e2e harness exercises every tool against real Graph endpoints — including 6 cross-tool user journeys (search a person → open a chat → send → search index → delete → verify gone).
