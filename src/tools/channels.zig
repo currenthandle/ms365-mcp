@@ -62,7 +62,10 @@ pub fn handleListTeams(ctx: ToolContext) void {
     }
 }
 
-/// List channels in a Team.
+/// List channels in a Team. Optional `query` filters channel names case-
+/// insensitively in-process — Graph's $filter doesn't support `contains`
+/// on channel collections, so we slice client-side. Optional `top` caps
+/// the number of matches returned (default 50).
 pub fn handleListChannels(ctx: ToolContext) void {
     const token = ctx.requireAuth() orelse return;
     const args = ctx.getArgs("Missing arguments. Provide teamId.") orelse return;
@@ -77,12 +80,178 @@ pub fn handleListChannels(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    if (formatter.summarizeArray(ctx.allocator, response, &team_or_channel_fields)) |summary| {
-        defer ctx.allocator.free(summary);
-        ctx.sendResult(summary);
-    } else {
-        ctx.sendResult("No channels found.");
+    const query = json_rpc.getStringArg(args, "query");
+    const top_str = json_rpc.getStringArg(args, "top") orelse "50";
+    const top = std.fmt.parseInt(usize, top_str, 10) catch 50;
+
+    if (query == null and top_str.len == 0) {
+        // Fast path: no filter, no cap — render everything via formatter.
+        if (formatter.summarizeArray(ctx.allocator, response, &team_or_channel_fields)) |summary| {
+            defer ctx.allocator.free(summary);
+            ctx.sendResult(summary);
+        } else {
+            ctx.sendResult("No channels found.");
+        }
+        return;
     }
+
+    const filtered = filterChannelsByName(ctx.allocator, response, query, top) catch {
+        ctx.sendResult(response);
+        return;
+    };
+    defer ctx.allocator.free(filtered);
+    ctx.sendResult(if (filtered.len > 0) filtered else "No channels matched.");
+}
+
+/// Walk a Graph `{value: [...]}` channel response, filter by name, and
+/// render a formatter-style summary. Each row: "name: X | desc: Y | id: Z".
+fn filterChannelsByName(
+    allocator: std.mem.Allocator,
+    response: []const u8,
+    query: ?[]const u8,
+    top: usize,
+) ![]u8 {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, response, .{}) catch return error.ParseFailed;
+    defer parsed.deinit();
+
+    const root = switch (parsed.value) { .object => |o| o, else => return error.ParseFailed };
+    const items = switch (root.get("value") orelse return error.ParseFailed) { .array => |a| a, else => return error.ParseFailed };
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    errdefer out.deinit();
+    const w = &out.writer;
+
+    var written: usize = 0;
+    for (items.items) |item_val| {
+        if (written >= top) break;
+        const obj = switch (item_val) { .object => |o| o, else => continue };
+        const name = switch (obj.get("displayName") orelse continue) { .string => |s| s, else => continue };
+        if (query) |q| {
+            if (q.len > 0 and !containsIgnoreCase(name, q)) continue;
+        }
+        const desc = if (obj.get("description")) |d| switch (d) { .string => |s| s, else => "" } else "";
+        const id = switch (obj.get("id") orelse continue) { .string => |s| s, else => continue };
+        if (desc.len > 0) {
+            w.print("name: {s} | desc: {s} | id: {s}\n", .{ name, desc, id }) catch continue;
+        } else {
+            w.print("name: {s} | id: {s}\n", .{ name, id }) catch continue;
+        }
+        written += 1;
+    }
+
+    return out.toOwnedSlice();
+}
+
+/// Case-insensitive substring check over ASCII. Graph names are
+/// always Latin/ASCII for channel/team display names in practice.
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (needle.len > haystack.len) return false;
+    var i: usize = 0;
+    while (i + needle.len <= haystack.len) : (i += 1) {
+        var match = true;
+        for (needle, 0..) |n_ch, j| {
+            if (std.ascii.toLower(haystack[i + j]) != std.ascii.toLower(n_ch)) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return true;
+    }
+    return false;
+}
+
+/// Search channels by name across every team the user has joined.
+///
+/// Workflow this exists to short-circuit: list-teams (~10 teams),
+/// list-channels per team (~100 channels each), eyeball-grep. With this
+/// tool the agent passes a name fragment and gets back matching channels
+/// with the teamId + channelId pair already paired up for post-channel-
+/// message or reply-to-channel-message.
+pub fn handleSearchChannels(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide query.") orelse return;
+    const query = ctx.getStringArg(args, "query", "Missing 'query' argument (channel name fragment).") orelse return;
+
+    // Default top=10 keeps the team walk short. Without a cap, a query
+    // like "general" matches in every joined team and the walk runs
+    // the full inventory — slow enough to hit common per-call deadlines.
+    const top_str = json_rpc.getStringArg(args, "top") orelse "10";
+    const top_total = std.fmt.parseInt(usize, top_str, 10) catch 10;
+
+    // Pull joined teams first.
+    const teams_response = graph.get(ctx.allocator, ctx.io, token, "/me/joinedTeams?$select=id,displayName") catch |err| {
+        ctx.sendGraphError(err);
+        return;
+    };
+    defer ctx.allocator.free(teams_response);
+
+    const teams_parsed = std.json.parseFromSlice(std.json.Value, ctx.allocator, teams_response, .{}) catch {
+        ctx.sendResult("Failed to parse teams response.");
+        return;
+    };
+    defer teams_parsed.deinit();
+
+    const teams_root = switch (teams_parsed.value) {
+        .object => |o| o,
+        else => {
+            ctx.sendResult("Unexpected teams response shape.");
+            return;
+        },
+    };
+    const teams_arr = switch (teams_root.get("value") orelse return) {
+        .array => |a| a,
+        else => return,
+    };
+
+    var out: std.Io.Writer.Allocating = .init(ctx.allocator);
+    defer out.deinit();
+    const w = &out.writer;
+
+    var written: usize = 0;
+    var teams_searched: usize = 0;
+
+    for (teams_arr.items) |team_val| {
+        if (written >= top_total) break;
+        const team = switch (team_val) { .object => |o| o, else => continue };
+        const team_id = switch (team.get("id") orelse continue) { .string => |s| s, else => continue };
+        const team_name = switch (team.get("displayName") orelse .null) { .string => |s| s, else => "(unknown team)" };
+        teams_searched += 1;
+
+        // Fetch this team's channels.
+        const path = std.fmt.allocPrint(ctx.allocator, "/teams/{s}/channels?$select=id,displayName,description", .{team_id}) catch continue;
+        defer ctx.allocator.free(path);
+
+        const channels_response = graph.get(ctx.allocator, ctx.io, token, path) catch continue;
+        defer ctx.allocator.free(channels_response);
+
+        const ch_parsed = std.json.parseFromSlice(std.json.Value, ctx.allocator, channels_response, .{}) catch continue;
+        defer ch_parsed.deinit();
+        const ch_root = switch (ch_parsed.value) { .object => |o| o, else => continue };
+        const ch_arr = switch (ch_root.get("value") orelse continue) { .array => |a| a, else => continue };
+
+        for (ch_arr.items) |ch_val| {
+            if (written >= top_total) break;
+            const ch = switch (ch_val) { .object => |o| o, else => continue };
+            const ch_name = switch (ch.get("displayName") orelse continue) { .string => |s| s, else => continue };
+            if (!containsIgnoreCase(ch_name, query)) continue;
+            const ch_id = switch (ch.get("id") orelse continue) { .string => |s| s, else => continue };
+
+            w.print("team: {s} | channel: {s} | teamId: {s} | channelId: {s}\n", .{ team_name, ch_name, team_id, ch_id }) catch continue;
+            written += 1;
+        }
+    }
+
+    if (written == 0) {
+        const msg = std.fmt.allocPrint(ctx.allocator, "No channels matched '{s}' across {d} joined team(s).", .{ query, teams_searched }) catch {
+            ctx.sendResult("No matches.");
+            return;
+        };
+        defer ctx.allocator.free(msg);
+        ctx.sendResult(msg);
+        return;
+    }
+    ctx.sendResult(out.written());
 }
 
 /// List messages (posts) in a Teams channel.

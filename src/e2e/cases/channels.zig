@@ -232,3 +232,73 @@ pub fn testReplyToChannelMessage(client: *McpClient) !void {
         defer del.deinit();
     }
 }
+
+/// Tool-level test: search-channels finds a channel by a name fragment
+/// across all joined teams. We use "general" as the query because every
+/// Teams team has a "General" channel — a built-in fixture we can rely
+/// on without seeding test data.
+pub fn testSearchChannels(client: *McpClient) !void {
+    // top=1 short-circuits the team walk once a match is found —
+    // searching for "general" matches every team's General channel,
+    // so without the cap we'd walk every joined team unnecessarily
+    // and risk hitting the e2e per-call timeout on slow runs.
+    const search = try client.callTool("search-channels", "{\"query\":\"general\",\"top\":\"1\"}");
+    defer search.deinit();
+    const text = McpClient.getResultText(search) orelse {
+        fail("search-channels", "no text in response");
+        return;
+    };
+
+    // Either we matched at least one General channel (expected) or we
+    // matched zero (only if the user has zero teams). Both are valid
+    // formats; we want to confirm the response shape.
+    if (std.mem.indexOf(u8, text, "channelId:") != null and
+        std.mem.indexOf(u8, text, "teamId:") != null and
+        shared.containsIgnoreCase(text, "general"))
+    {
+        pass("search-channels found General channel");
+    } else if (std.mem.indexOf(u8, text, "No channels matched") != null) {
+        skip("search-channels", "no joined teams have a General channel match — unusual but valid");
+    } else {
+        fail("search-channels", text);
+    }
+}
+
+/// Tool-level test: list-channels with a query filter actually filters.
+/// Same fixture (every team has a General channel) so we can assert the
+/// query trimmed the result without needing to know the team's full
+/// channel inventory.
+pub fn testListChannelsQueryFilter(client: *McpClient) !void {
+    const teams = try client.callTool("list-teams", null);
+    defer teams.deinit();
+    const teams_text = McpClient.getResultText(teams) orelse {
+        fail("list-channels filter setup", "no teams");
+        return;
+    };
+    const team_id = helpers.extractFirstValueField(client.allocator, teams_text, "id") orelse {
+        fail("list-channels filter setup", "no team id");
+        return;
+    };
+    defer client.allocator.free(team_id);
+
+    var args_buf: [512]u8 = undefined;
+    const args = std.fmt.bufPrint(&args_buf, "{{\"teamId\":\"{s}\",\"query\":\"general\"}}", .{team_id}) catch return;
+    const filtered = try client.callTool("list-channels", args);
+    defer filtered.deinit();
+    const text = McpClient.getResultText(filtered) orelse {
+        fail("list-channels (query filter)", "no text");
+        return;
+    };
+
+    // Expect at least one channel name containing "general" (case-insensitive)
+    // and no obviously unrelated channels.
+    if (shared.containsIgnoreCase(text, "general")) {
+        pass("list-channels with query filter");
+    } else if (std.mem.indexOf(u8, text, "No channels matched") != null) {
+        // Possible if the team has no "General" — fail loudly because we
+        // expected one based on the Teams default.
+        fail("list-channels (query filter)", "team has no General channel — unexpected");
+    } else {
+        fail("list-channels (query filter)", text);
+    }
+}

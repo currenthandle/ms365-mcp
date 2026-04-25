@@ -144,6 +144,139 @@ pub fn handleListChats(ctx: ToolContext) void {
     ctx.sendResult(if (summary.len > 0) summary else "No chats found.");
 }
 
+/// Search chats by participant name OR topic, walking paginated
+/// /me/chats and filtering client-side.
+///
+/// Microsoft Graph's /search/query doesn't index chat *containers* —
+/// only individual chat messages — so there's no server-side search for
+/// "the 1:1 chat I have with Marcus" or "the group chat with topic
+/// pricing". This tool paginates list-chats up to `maxScan` chats
+/// (default 200), filters by name fragment against members or topic,
+/// and stops once `top` matches accumulate.
+pub fn handleSearchChats(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide query.") orelse return;
+    const query = ctx.getStringArg(args, "query", "Missing 'query' argument (member name or topic fragment).") orelse return;
+
+    const top_str = json_rpc.getStringArg(args, "top") orelse "10";
+    const top = std.fmt.parseInt(usize, top_str, 10) catch 10;
+    const max_scan_str = json_rpc.getStringArg(args, "maxScan") orelse "200";
+    const max_scan = std.fmt.parseInt(usize, max_scan_str, 10) catch 200;
+
+    var out: std.Io.Writer.Allocating = .init(ctx.allocator);
+    defer out.deinit();
+    const w = &out.writer;
+
+    var matches: usize = 0;
+    var scanned: usize = 0;
+
+    var next_path: ?[]u8 = std.fmt.allocPrint(
+        ctx.allocator,
+        "/me/chats?$top=50&$select=id,topic,chatType,lastUpdatedDateTime&$expand=members",
+        .{},
+    ) catch return;
+
+    while (next_path) |path| : (next_path = next_path) {
+        defer ctx.allocator.free(path);
+        next_path = null;
+
+        const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+            ctx.sendGraphError(err);
+            return;
+        };
+        defer ctx.allocator.free(response);
+
+        const parsed = std.json.parseFromSlice(std.json.Value, ctx.allocator, response, .{}) catch break;
+        defer parsed.deinit();
+
+        const root = switch (parsed.value) { .object => |o| o, else => break };
+        const chats = switch (root.get("value") orelse break) { .array => |a| a, else => break };
+
+        for (chats.items) |chat_val| {
+            if (matches >= top or scanned >= max_scan) break;
+            scanned += 1;
+
+            const chat = switch (chat_val) { .object => |o| o, else => continue };
+            const chat_type = switch (chat.get("chatType") orelse .null) { .string => |s| s, else => "unknown" };
+            const topic = switch (chat.get("topic") orelse .null) { .string => |s| s, else => "" };
+            const chat_id = switch (chat.get("id") orelse continue) { .string => |s| s, else => continue };
+
+            // Match topic OR any member's displayName.
+            var hit = topic.len > 0 and containsIgnoreCase(topic, query);
+            if (!hit) {
+                if (chat.get("members")) |members_val| {
+                    if (switch (members_val) { .array => |a| a, else => null }) |members| {
+                        for (members.items) |m_val| {
+                            const m = switch (m_val) { .object => |o| o, else => continue };
+                            const name = switch (m.get("displayName") orelse continue) { .string => |s| s, else => continue };
+                            if (containsIgnoreCase(name, query)) {
+                                hit = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (!hit) continue;
+
+            // Render this match.
+            w.print("[{s}] {s}", .{ chat_type, if (topic.len > 0) topic else "(no topic)" }) catch continue;
+            if (chat.get("members")) |members_val| {
+                if (switch (members_val) { .array => |a| a, else => null }) |members| {
+                    w.writeAll(" — ") catch continue;
+                    for (members.items, 0..) |m_val, i| {
+                        const m = switch (m_val) { .object => |o| o, else => continue };
+                        const name = switch (m.get("displayName") orelse continue) { .string => |s| s, else => continue };
+                        if (i > 0) w.writeAll(", ") catch continue;
+                        w.writeAll(name) catch continue;
+                    }
+                }
+            }
+            w.print(" — id: {s}\n", .{chat_id}) catch continue;
+            matches += 1;
+        }
+        if (matches >= top or scanned >= max_scan) break;
+
+        // Follow nextLink if there is one.
+        if (root.get("@odata.nextLink")) |next_val| {
+            if (switch (next_val) { .string => |s| s, else => null }) |nl| {
+                if (graph.stripGraphPrefix(nl)) |stripped| {
+                    next_path = ctx.allocator.dupe(u8, stripped) catch null;
+                }
+            }
+        }
+    }
+
+    if (matches == 0) {
+        const msg = std.fmt.allocPrint(ctx.allocator, "No chats matched '{s}' after scanning {d} chat(s).", .{ query, scanned }) catch {
+            ctx.sendResult("No matches.");
+            return;
+        };
+        defer ctx.allocator.free(msg);
+        ctx.sendResult(msg);
+        return;
+    }
+    ctx.sendResult(out.written());
+}
+
+/// Case-insensitive substring check over ASCII.
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (needle.len > haystack.len) return false;
+    var i: usize = 0;
+    while (i + needle.len <= haystack.len) : (i += 1) {
+        var match = true;
+        for (needle, 0..) |n_ch, j| {
+            if (std.ascii.toLower(haystack[i + j]) != std.ascii.toLower(n_ch)) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return true;
+    }
+    return false;
+}
+
 /// Send a message in a Teams chat.
 pub fn handleSendChatMessage(ctx: ToolContext) void {
     const token = ctx.requireAuth() orelse return;

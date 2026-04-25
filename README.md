@@ -1,6 +1,6 @@
 # ms365-mcp
 
-A Microsoft 365 MCP server that's small enough you forget it's running. 63 tools across Teams, Outlook, Calendar, SharePoint, and OneDrive. Built in Zig — no Node, no Python, no runtime dependencies. Statically linked.
+A Microsoft 365 MCP server that's small enough you forget it's running. 67 tools across Teams, Outlook, Calendar, SharePoint, and OneDrive. Built in Zig — no Node, no Python, no runtime dependencies. Statically linked.
 
 **The numbers that matter** (measured, not estimated):
 
@@ -11,7 +11,7 @@ A Microsoft 365 MCP server that's small enough you forget it's running. 63 tools
 | Binary size | **5.9 MB** statically linked |
 | `list-emails` payload to the model | **4.2 KB** vs **31 KB** raw Graph (**~87% smaller**) |
 | Tokens per `list-emails` call | **~1,050** vs ~7,800 raw |
-| End-to-end test count, against live Graph | **85** (no mocks) |
+| End-to-end test count, against live Graph | **94** (no mocks) |
 
 The context savings are the lever. On a 200K-token model, ms365-mcp lets the agent hold ~50 inbox snapshots in working memory instead of ~6. That's the difference between "the agent forgot what it was doing" and "the agent finishes the task."
 
@@ -65,13 +65,13 @@ The staging release is rebuilt automatically on every push to the `staging` bran
 
 **Calendar** (8) — list-calendar-events, get-calendar-event, create-calendar-event, update-calendar-event, delete-calendar-event, find-meeting-times, get-schedule, respond-to-event
 
-**Teams Chat** (6) — list-chats, list-chat-messages, search-chat-messages, send-chat-message, create-chat, delete-chat-message
+**Teams Chat** (7) — list-chats, search-chats, list-chat-messages, search-chat-messages, send-chat-message, create-chat, delete-chat-message
 
-**Teams Channels** (8) — list-teams, list-channels, list-channel-messages, get-channel-message-replies, post-channel-message, reply-to-channel-message, delete-channel-message, delete-channel-reply
+**Teams Channels** (9) — list-teams, list-channels, search-channels, list-channel-messages, get-channel-message-replies, post-channel-message, reply-to-channel-message, delete-channel-message, delete-channel-reply
 
-**SharePoint** (8) — search-sharepoint-sites, list-sharepoint-drives, list-sharepoint-items, upload-sharepoint-file, upload-sharepoint-content, create-sharepoint-folder, delete-sharepoint-item, download-sharepoint-file
+**SharePoint** (9) — search-sharepoint-sites, list-sharepoint-drives, list-sharepoint-items, search-sharepoint-files, upload-sharepoint-file, upload-sharepoint-content, create-sharepoint-folder, delete-sharepoint-item, download-sharepoint-file
 
-**OneDrive** (5) — list-onedrive-items, upload-onedrive-file, upload-onedrive-content, download-onedrive-file, delete-onedrive-item
+**OneDrive** (6) — list-onedrive-items, search-onedrive-files, upload-onedrive-file, upload-onedrive-content, download-onedrive-file, delete-onedrive-item
 
 **Auth & utility** (6) — login, verify-login, get-mailbox-settings, sync-timezone, search-users, get-profile
 

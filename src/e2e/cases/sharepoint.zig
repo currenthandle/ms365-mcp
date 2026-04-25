@@ -421,6 +421,151 @@ pub fn testSharePointPathValidation(client: *McpClient) !void {
     }
 }
 
+/// Tool-level test: search-sharepoint-files round-trip — upload a file
+/// with a unique name, search for it via the Microsoft Search index,
+/// confirm it's found, then clean up.
+///
+/// Note: the Search index is eventually consistent — a freshly uploaded
+/// file can take 30-60s to appear in search results. We poll with a 90s
+/// budget, which matches the email-search lag tolerance elsewhere.
+pub fn testSearchSharepointFiles(client: *McpClient) !void {
+    const site_query = std.mem.span(std.c.getenv("E2E_SHAREPOINT_SITE_NAME").?);
+
+    // Find a site + drive to upload into.
+    var s_buf: [512]u8 = undefined;
+    const s_args = std.fmt.bufPrint(&s_buf, "{{\"query\":\"{s}\"}}", .{site_query}) catch return;
+    const sites = try client.callTool("search-sharepoint-sites", s_args);
+    defer sites.deinit();
+    const sites_text = McpClient.getResultText(sites) orelse {
+        fail("search-sharepoint-files setup", "no sites text");
+        return;
+    };
+    const site_id = helpers.extractFirstValueField(client.allocator, sites_text, "id") orelse {
+        fail("search-sharepoint-files setup", "no site");
+        return;
+    };
+    defer client.allocator.free(site_id);
+
+    var d_buf: [512]u8 = undefined;
+    const d_args = std.fmt.bufPrint(&d_buf, "{{\"siteId\":\"{s}\"}}", .{site_id}) catch return;
+    const drives = try client.callTool("list-sharepoint-drives", d_args);
+    defer drives.deinit();
+    const drives_text = McpClient.getResultText(drives) orelse {
+        fail("search-sharepoint-files setup", "no drives");
+        return;
+    };
+    const drive_id = helpers.extractFirstValueField(client.allocator, drives_text, "id") orelse {
+        fail("search-sharepoint-files setup", "no drive");
+        return;
+    };
+    defer client.allocator.free(drive_id);
+
+    // Upload a unique probe file.
+    const probe_token = "E2E-SP-SEARCH-PROBE-T9X4";
+    const probe_path = "e2e-sp-search-probe.md";
+    var u_buf: [2048]u8 = undefined;
+    const u_args = std.fmt.bufPrint(
+        &u_buf,
+        "{{\"siteId\":\"{s}\",\"driveId\":\"{s}\",\"path\":\"{s}\",\"content\":\"unique marker {s} for e2e search test\"}}",
+        .{ site_id, drive_id, probe_path, probe_token },
+    ) catch return;
+    const upload = try client.callTool("upload-sharepoint-content", u_args);
+    defer upload.deinit();
+    const upload_text = McpClient.getResultText(upload) orelse {
+        fail("search-sharepoint-files setup", "no upload text");
+        return;
+    };
+    if (std.mem.indexOf(u8, upload_text, "\"id\"") == null) {
+        fail("search-sharepoint-files setup", upload_text);
+        return;
+    }
+
+    // Poll the search index.
+    var found = false;
+    var attempts: usize = 0;
+    while (attempts < 30 and !found) : (attempts += 1) {
+        _ = std.c.nanosleep(&.{ .sec = 3, .nsec = 0 }, null);
+        var sx_buf: [512]u8 = undefined;
+        const sx_args = std.fmt.bufPrint(&sx_buf, "{{\"query\":\"{s}\"}}", .{probe_token}) catch return;
+        const sx = try client.callTool("search-sharepoint-files", sx_args);
+        defer sx.deinit();
+        const sx_text = McpClient.getResultText(sx) orelse continue;
+        if (std.mem.indexOf(u8, sx_text, probe_token) != null or
+            std.mem.indexOf(u8, sx_text, probe_path) != null)
+        {
+            found = true;
+        }
+    }
+    if (found) {
+        pass("search-sharepoint-files found probe via Search index");
+    } else {
+        fail("search-sharepoint-files", "probe never appeared in Microsoft Search after 90s");
+    }
+
+    // Clean up.
+    var del_buf: [1024]u8 = undefined;
+    const del_args = std.fmt.bufPrint(
+        &del_buf,
+        "{{\"siteId\":\"{s}\",\"driveId\":\"{s}\",\"path\":\"{s}\"}}",
+        .{ site_id, drive_id, probe_path },
+    ) catch return;
+    const del = try client.callTool("delete-sharepoint-item", del_args);
+    defer del.deinit();
+}
+
+/// Tool-level test: search-onedrive-files round-trip. Same pattern as
+/// the SharePoint test but the upload + search target the personal
+/// /me/drive instead of a SharePoint site.
+pub fn testSearchOnedriveFiles(client: *McpClient) !void {
+    const probe_token = "E2E-OD-SEARCH-PROBE-K8M2";
+    const probe_path = "e2e-od-search-probe.md";
+
+    var u_buf: [1024]u8 = undefined;
+    const u_args = std.fmt.bufPrint(
+        &u_buf,
+        "{{\"path\":\"{s}\",\"content\":\"unique marker {s} for e2e search test\"}}",
+        .{ probe_path, probe_token },
+    ) catch return;
+    const upload = try client.callTool("upload-onedrive-content", u_args);
+    defer upload.deinit();
+    const upload_text = McpClient.getResultText(upload) orelse {
+        fail("search-onedrive-files setup", "no upload text");
+        return;
+    };
+    if (std.mem.indexOf(u8, upload_text, "\"id\"") == null and
+        std.mem.indexOf(u8, upload_text, "id:") == null)
+    {
+        fail("search-onedrive-files setup", upload_text);
+        return;
+    }
+
+    var found = false;
+    var attempts: usize = 0;
+    while (attempts < 30 and !found) : (attempts += 1) {
+        _ = std.c.nanosleep(&.{ .sec = 3, .nsec = 0 }, null);
+        var sx_buf: [512]u8 = undefined;
+        const sx_args = std.fmt.bufPrint(&sx_buf, "{{\"query\":\"{s}\"}}", .{probe_token}) catch return;
+        const sx = try client.callTool("search-onedrive-files", sx_args);
+        defer sx.deinit();
+        const sx_text = McpClient.getResultText(sx) orelse continue;
+        if (std.mem.indexOf(u8, sx_text, probe_token) != null or
+            std.mem.indexOf(u8, sx_text, probe_path) != null)
+        {
+            found = true;
+        }
+    }
+    if (found) {
+        pass("search-onedrive-files found probe via Search index");
+    } else {
+        fail("search-onedrive-files", "probe never appeared in Microsoft Search after 90s");
+    }
+
+    var del_buf: [512]u8 = undefined;
+    const del_args = std.fmt.bufPrint(&del_buf, "{{\"path\":\"{s}\"}}", .{probe_path}) catch return;
+    const del = try client.callTool("delete-onedrive-item", del_args);
+    defer del.deinit();
+}
+
 // ============================================================================
 // Phase 4 — Email action tools (reply, forward, search, folders, mark, move,
 //                               list-attachments, read-attachment)

@@ -10,7 +10,14 @@ const Io = std.Io;
 /// within this many milliseconds the call fails with error.ServerHung, we
 /// kill the child, and the test exits with a clear diagnostic. Prior to
 /// this timeout, a hung server would wedge the whole e2e run indefinitely.
-pub const default_timeout_ms: i32 = 10_000;
+///
+/// 30 seconds is generous — most calls finish in <1s — but Graph's
+/// /search endpoints, SharePoint site search, and tools that walk many
+/// Graph round-trips (search-channels across 10+ teams) legitimately
+/// take 5-15 seconds on slow days. A tighter cap surfaces those as
+/// hangs and produces noisy false negatives. Genuine deadlocks still
+/// trip the timeout — they just take 30s to declare instead of 10s.
+pub const default_timeout_ms: i32 = 30_000;
 
 pub const CallError = error{
     ServerHung,

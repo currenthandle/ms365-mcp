@@ -512,3 +512,132 @@ pub fn handleDownloadFile(ctx: ToolContext) void {
     ctx.sendResult(msg);
 }
 
+/// Search for files across all SharePoint drives the user can access.
+///
+/// Uses POST /search/query with entityTypes=["driveItem"]. Microsoft's
+/// search index covers SharePoint document libraries the user has access
+/// to and returns matches by name + content. Use this when the agent
+/// knows a filename fragment but not the site or folder path.
+///
+/// Returns one row per match with name, parent path (so an agent can
+/// reconstruct the site/folder context), webUrl, and ids.
+pub fn handleSearchFiles(ctx: ToolContext) void {
+    searchDriveItems(ctx, "sharepoint");
+}
+
+/// Search for files in the user's personal OneDrive (/me/drive).
+///
+/// Same Microsoft Search index as search-sharepoint-files but constrained
+/// to the user's personal drive. Use this when an agent needs to find a
+/// file in OneDrive without knowing its folder path.
+pub fn handleSearchOneDriveFiles(ctx: ToolContext) void {
+    searchDriveItems(ctx, "onedrive");
+}
+
+/// Shared body of search-sharepoint-files / search-onedrive-files.
+/// `scope` is "sharepoint" or "onedrive" — both call /search/query with
+/// entityTypes=["driveItem"]; we filter the results client-side based on
+/// whether the parent path looks like a personal drive or a SharePoint
+/// site, since Graph's search filters can't easily distinguish them.
+fn searchDriveItems(ctx: ToolContext, scope: []const u8) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide query.") orelse return;
+    const query = ctx.getStringArg(args, "query", "Missing 'query' argument.") orelse return;
+
+    const size = json_rpc.getStringArg(args, "size") orelse "25";
+    const from = json_rpc.getStringArg(args, "from") orelse "0";
+
+    var body_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
+    defer body_buf.deinit();
+    const bw = &body_buf.writer;
+    bw.writeAll("{\"requests\":[{\"entityTypes\":[\"driveItem\"],\"query\":{\"queryString\":") catch return;
+    std.json.Stringify.encodeJsonString(query, .{}, bw) catch return;
+    bw.print("}},\"from\":{s},\"size\":{s}}}]}}", .{ from, size }) catch return;
+
+    const response = graph.post(ctx.allocator, ctx.io, token, "/search/query", body_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
+        return;
+    };
+    defer ctx.allocator.free(response);
+
+    const summary = summarizeDriveItemSearch(ctx.allocator, response, scope) catch {
+        ctx.sendResult(response);
+        return;
+    };
+    defer ctx.allocator.free(summary);
+    const empty_msg = if (std.mem.eql(u8, scope, "onedrive"))
+        "No OneDrive files matched that query."
+    else
+        "No SharePoint files matched that query.";
+    ctx.sendResult(if (summary.len > 0) summary else empty_msg);
+}
+
+/// Parse /search/query's nested response for driveItem hits and produce
+/// a condensed summary. Filters by `scope` — onedrive matches are paths
+/// under "/personal/", sharepoint matches are under "/sites/".
+fn summarizeDriveItemSearch(allocator: std.mem.Allocator, response: []const u8, scope: []const u8) ![]u8 {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, response, .{}) catch return error.ParseFailed;
+    defer parsed.deinit();
+
+    const root = switch (parsed.value) { .object => |o| o, else => return error.ParseFailed };
+    const value_arr = switch (root.get("value") orelse return error.ParseFailed) { .array => |a| a, else => return error.ParseFailed };
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    errdefer out.deinit();
+    const w = &out.writer;
+
+    const want_onedrive = std.mem.eql(u8, scope, "onedrive");
+
+    for (value_arr.items) |resp_val| {
+        const resp = switch (resp_val) { .object => |o| o, else => continue };
+        const containers = switch (resp.get("hitsContainers") orelse continue) { .array => |a| a, else => continue };
+        for (containers.items) |container_val| {
+            const container = switch (container_val) { .object => |o| o, else => continue };
+            const hits = switch (container.get("hits") orelse continue) { .array => |a| a, else => continue };
+            for (hits.items) |hit_val| {
+                const hit = switch (hit_val) { .object => |o| o, else => continue };
+                const resource = switch (hit.get("resource") orelse continue) { .object => |o| o, else => continue };
+
+                const name = switch (resource.get("name") orelse .null) { .string => |s| s, else => "(unnamed)" };
+                const id = switch (resource.get("id") orelse .null) { .string => |s| s, else => "" };
+                const web_url = switch (resource.get("webUrl") orelse .null) { .string => |s| s, else => "" };
+
+                // Parent reference tells us which drive + folder this lives in.
+                var parent_path: []const u8 = "";
+                var drive_id: []const u8 = "";
+                if (resource.get("parentReference")) |p_val| {
+                    if (switch (p_val) { .object => |o| o, else => null }) |p_obj| {
+                        if (p_obj.get("path")) |pp| {
+                            if (switch (pp) { .string => |s| s, else => null }) |s| parent_path = s;
+                        }
+                        if (p_obj.get("driveId")) |dd| {
+                            if (switch (dd) { .string => |s| s, else => null }) |s| drive_id = s;
+                        }
+                    }
+                }
+
+                // Scope filter: OneDrive items have parent paths like
+                // "/drives/<id>/root:/..." with the drive being the user's
+                // personal drive; SharePoint items have webUrl that contains
+                // "/sites/" or parent paths under a site. We use webUrl as
+                // the most reliable signal — OneDrive personal URLs contain
+                // "-my.sharepoint.com" or "/personal/", SharePoint URLs
+                // contain "/sites/".
+                const is_onedrive = std.mem.indexOf(u8, web_url, "/personal/") != null or
+                    std.mem.indexOf(u8, web_url, "-my.sharepoint.com") != null;
+                if (want_onedrive and !is_onedrive) continue;
+                if (!want_onedrive and is_onedrive) continue;
+
+                w.print("name: {s}", .{name}) catch continue;
+                if (parent_path.len > 0) w.print(" | path: {s}", .{parent_path}) catch {};
+                if (drive_id.len > 0) w.print(" | driveId: {s}", .{drive_id}) catch {};
+                if (id.len > 0) w.print(" | itemId: {s}", .{id}) catch {};
+                if (web_url.len > 0) w.print(" | webUrl: {s}", .{web_url}) catch {};
+                w.writeAll("\n") catch continue;
+            }
+        }
+    }
+
+    return out.toOwnedSlice();
+}
+
