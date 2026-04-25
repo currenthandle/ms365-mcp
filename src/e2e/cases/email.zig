@@ -37,24 +37,25 @@ pub fn testSendEmailLifecycle(client: *McpClient) !void {
         return;
     }
 
-    // Poll via search-emails (searches all folders, not just top-10
-    // inbox). Self-sent mail often lands in a subfolder via inbox
-    // rules and noisy inboxes push new mail off the top-10 list in
-    // seconds. search uses Exchange's full-text index which covers
-    // everything.
+    // Find the just-sent message in the Sent Items folder. Sent Items
+    // is consistent (no $search indexing lag), but Graph takes 1-3s
+    // to move the message from /me/sendMail's accept queue into the
+    // Sent folder. A short retry loop is deterministic — earlier
+    // versions polled `search-emails` for up to 180s and still missed
+    // fresh mail because the $search index lags much longer than the
+    // Sent-Items propagation. Sent Items always settles within a few
+    // seconds.
     var email_id: ?[]u8 = null;
-    var poll_attempts: usize = 0;
-    while (poll_attempts < 60 and email_id == null) : (poll_attempts += 1) {
-        _ = std.c.nanosleep(&.{ .sec = 3, .nsec = 0 }, null);
-        // Search for a unique word from the body; Graph's $search
-        // across "subject:" with bracketed tokens can miss.
-        const search = try client.callTool("search-emails", "{\"query\":\"e2e test suite\"}");
-        defer search.deinit();
-        const search_text = McpClient.getResultText(search) orelse continue;
-        email_id = helpers.findEmailBySubject(client.allocator, search_text, "DISREGARD AUTOMATED TEST EMAIL");
+    var sent_attempts: usize = 0;
+    while (sent_attempts < 5 and email_id == null) : (sent_attempts += 1) {
+        if (sent_attempts > 0) _ = std.c.nanosleep(&.{ .sec = 1, .nsec = 0 }, null);
+        const sent_list = try client.callTool("list-emails", "{\"folder\":\"sentitems\",\"top\":\"10\"}");
+        defer sent_list.deinit();
+        const sent_text = McpClient.getResultText(sent_list) orelse continue;
+        email_id = helpers.findEmailBySubject(client.allocator, sent_text, "DISREGARD AUTOMATED TEST EMAIL");
     }
     const email_id_found = email_id orelse {
-        fail("send-email cleanup", "test email never appeared in mailbox search after 180s");
+        fail("send-email cleanup", "just-sent email not in Sent Items after 5s — Graph send didn't actually deliver");
         return;
     };
     defer client.allocator.free(email_id_found);
@@ -97,7 +98,12 @@ pub fn testSendEmailLifecycle(client: *McpClient) !void {
 /// Exchange delivery is too slow (often 60s+) and flaky for an e2e loop.
 /// Caller owns the returned slice.
 fn grabFirstInboxEmailId(client: *McpClient) !?[]u8 {
-    const list = try client.callTool("list-emails", null);
+    // Scope to the Inbox folder specifically. Without `folder`,
+    // /me/messages includes drafts and they often sort to the top by
+    // receivedDateTime; using a draft id with mark-read or move-email
+    // returns 404 because Graph rejects mutations on items outside
+    // the user's regular folder hierarchy via that endpoint.
+    const list = try client.callTool("list-emails", "{\"folder\":\"inbox\",\"top\":\"5\"}");
     defer list.deinit();
     const list_text = McpClient.getResultText(list) orelse return null;
     // Formatter output: first line is "subject: ... | from: ... | ... | id: X"
@@ -213,6 +219,70 @@ pub fn testEmailSearch(client: *McpClient) !void {
         pass("search-emails");
     } else {
         fail("search-emails", text);
+    }
+}
+
+/// Test: search-emails honors the size param. Default is 25; ask for 5
+/// and we should see at most 5 id: lines in the formatted response.
+pub fn testEmailSearchSizeParam(client: *McpClient) !void {
+    const search = try client.callTool("search-emails", "{\"query\":\"the\",\"size\":\"5\"}");
+    defer search.deinit();
+    const text = McpClient.getResultText(search) orelse {
+        fail("search-emails (size)", "no text");
+        return;
+    };
+    // Count `id:` occurrences (one per result row from the formatter).
+    var count: usize = 0;
+    var i: usize = 0;
+    while (std.mem.indexOfPos(u8, text, i, "id:")) |idx| {
+        count += 1;
+        i = idx + 3;
+    }
+    if (count <= 5) {
+        pass("search-emails (size param caps results)");
+    } else {
+        fail("search-emails (size param)", "got more than 5 results");
+    }
+}
+
+/// Test: list-emails honors the top param. Default is 10; ask for 3.
+pub fn testListEmailsTopParam(client: *McpClient) !void {
+    const list = try client.callTool("list-emails", "{\"top\":\"3\"}");
+    defer list.deinit();
+    const text = McpClient.getResultText(list) orelse {
+        fail("list-emails (top)", "no text");
+        return;
+    };
+    var count: usize = 0;
+    var i: usize = 0;
+    while (std.mem.indexOfPos(u8, text, i, "id:")) |idx| {
+        count += 1;
+        i = idx + 3;
+    }
+    // top:3 should return up to 3 hits, plus possibly a `nextLink:` line
+    // (which doesn't contain `id:` so won't inflate the count).
+    if (count <= 3) {
+        pass("list-emails (top param caps results)");
+    } else {
+        fail("list-emails (top param)", "got more than 3 results");
+    }
+}
+
+/// Test: list-emails returns a nextLink for cursor pagination when
+/// there are more results than the page size.
+pub fn testListEmailsNextLink(client: *McpClient) !void {
+    const list = try client.callTool("list-emails", "{\"top\":\"2\"}");
+    defer list.deinit();
+    const text = McpClient.getResultText(list) orelse {
+        fail("list-emails (nextLink)", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, text, "nextLink:") != null) {
+        pass("list-emails (nextLink for pagination)");
+    } else {
+        // Acceptable if mailbox has <= 2 emails total, but unlikely on
+        // the test account. Mark a soft skip.
+        skip("list-emails (nextLink)", "no nextLink — mailbox may have <=2 emails total");
     }
 }
 

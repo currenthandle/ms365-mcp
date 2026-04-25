@@ -81,27 +81,88 @@ pub fn parseRecipients(
     return recipients;
 }
 
-/// List the 10 most recent emails from the user's inbox.
+/// List the most recent emails from the user's inbox or any other folder.
+///
+/// Optional `top` raises the page size (1-1000, default 10). Optional
+/// `folder` scopes to a specific mail folder by ID — pass a folder ID
+/// from list-mail-folders, or use the well-known names ("inbox",
+/// "sentitems", "drafts", "deleteditems", "archive"). Optional
+/// `pageToken` follows a previous response's `nextLink` for cursor
+/// pagination across very large mailboxes.
 pub fn handleListEmails(ctx: ToolContext) void {
     const token = ctx.requireAuth() orelse return;
 
-    // $select scopes the columns Graph returns. Combined with the formatter,
-    // this keeps the LLM-facing summary tiny — one line per email.
-    const response = graph.get(
-        ctx.allocator, ctx.io, token,
-        "/me/messages?$top=10&$select=id,subject,from,receivedDateTime,bodyPreview,webLink&$orderby=receivedDateTime%20desc",
-    ) catch |err| {
+    const args_opt = json_rpc.getToolArgs(ctx.parsed);
+    const page_token = if (args_opt) |a| json_rpc.getStringArg(a, "pageToken") else null;
+
+    // pageToken short-circuits everything else — it's already a complete URL.
+    const path = if (page_token) |pt| blk: {
+        break :blk graph.stripGraphPrefix(pt) orelse {
+            ctx.sendResult("Invalid pageToken — must be a Graph API URL.");
+            return;
+        };
+    } else blk: {
+        const top = if (args_opt) |a| json_rpc.getStringArg(a, "top") orelse "10" else "10";
+        const folder = if (args_opt) |a| json_rpc.getStringArg(a, "folder") else null;
+
+        // /me/messages searches across all folders by default. Scoping via
+        // /me/mailFolders/{id}/messages returns only that folder's items.
+        if (folder) |f| {
+            break :blk std.fmt.allocPrint(
+                ctx.allocator,
+                "/me/mailFolders/{s}/messages?$top={s}&$select=id,subject,from,receivedDateTime,bodyPreview,webLink&$orderby=receivedDateTime%20desc",
+                .{ f, top },
+            ) catch return;
+        }
+        break :blk std.fmt.allocPrint(
+            ctx.allocator,
+            "/me/messages?$top={s}&$select=id,subject,from,receivedDateTime,bodyPreview,webLink&$orderby=receivedDateTime%20desc",
+            .{top},
+        ) catch return;
+    };
+    defer if (page_token == null) ctx.allocator.free(path);
+
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
         ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    if (formatter.summarizeArray(ctx.allocator, response, &list_email_fields)) |summary| {
+    if (summarizeWithNextLink(ctx.allocator, response, &list_email_fields)) |summary| {
         defer ctx.allocator.free(summary);
         ctx.sendResult(summary);
     } else {
         ctx.sendResult("No emails found.");
     }
+}
+
+/// Render a Graph list response through the formatter, then append a
+/// `nextLink:` line if Graph returned an `@odata.nextLink`. Lets the
+/// agent paginate without having to compute `from`/`top` itself —
+/// just pass the URL back as `pageToken` on the next call.
+fn summarizeWithNextLink(
+    allocator: Allocator,
+    response: []const u8,
+    fields: []const formatter.FieldSpec,
+) ?[]u8 {
+    const summary = formatter.summarizeArray(allocator, response, fields) orelse return null;
+
+    // Cheap nextLink extraction — we already parse JSON in the formatter,
+    // but doing it again here keeps the formatter API simple. The string
+    // we look for is unambiguous in any well-formed Graph response.
+    const marker = "\"@odata.nextLink\":\"";
+    const start = std.mem.indexOf(u8, response, marker) orelse return summary;
+    const val_start = start + marker.len;
+    const val_end = std.mem.indexOfScalarPos(u8, response, val_start, '"') orelse return summary;
+
+    const next_url = response[val_start..val_end];
+    const combined = std.fmt.allocPrint(
+        allocator,
+        "{s}\nnextLink: {s}\n",
+        .{ summary, next_url },
+    ) catch return summary;
+    allocator.free(summary);
+    return combined;
 }
 
 /// Read the full content of a single email by ID.
@@ -357,27 +418,83 @@ pub fn handleReplyAllEmail(ctx: ToolContext) void {
 }
 
 /// Search the user's mailbox for emails matching a keyword.
+///
+/// Hits Graph's $search index — searches the entire mailbox (every
+/// folder) and returns matches ranked by relevance. Like a web search:
+/// no scope cap, just paginated relevance-ranked hits.
+///
+/// Optional knobs:
+///   `size`           — page size (1-1000, default 25)
+///   `from`           — offset for pagination
+///   `receivedAfter`  — ISO 8601 date — return only mail received on/after
+///   `receivedBefore` — ISO 8601 date — return only mail received on/before
+///   `folder`         — restrict to one folder (id from list-mail-folders, or
+///                      well-known names like "inbox", "sentitems")
+///   `pageToken`      — follow a previous response's nextLink for cursor
+///                      pagination (preferred over `from` when chaining calls)
+///
 /// Graph: GET /me/messages?$search="{q}" with 'ConsistencyLevel: eventual'.
-/// The quoted query syntax and ConsistencyLevel header are both required,
-/// or the query silently drops attributes on certain fields.
+/// $search and $filter can be combined; $orderby is ignored when $search
+/// is present (relevance ranking takes over), so date filters narrow but
+/// don't reorder.
 pub fn handleSearchEmails(ctx: ToolContext) void {
     const token = ctx.requireAuth() orelse return;
     const args = ctx.getArgs("Missing arguments. Provide query.") orelse return;
-    const query = ctx.getStringArg(args, "query", "Missing 'query' argument.") orelse return;
 
-    // URL-encode the query for path safety. url.encode handles spaces,
-    // quotes, and other reserved characters per RFC 3986.
-    const encoded = url_util.encode(ctx.allocator, query) catch return;
-    defer ctx.allocator.free(encoded);
+    const page_token = json_rpc.getStringArg(args, "pageToken");
 
-    // $search values must be wrapped in %22-escaped double-quotes per the
-    // Graph spec; otherwise multi-word searches fail.
-    const path = std.fmt.allocPrint(
-        ctx.allocator,
-        "/me/messages?$search=%22{s}%22&$top=25&$select=id,subject,from,receivedDateTime,bodyPreview,webLink",
-        .{encoded},
-    ) catch return;
-    defer ctx.allocator.free(path);
+    const path = if (page_token) |pt| blk: {
+        break :blk graph.stripGraphPrefix(pt) orelse {
+            ctx.sendResult("Invalid pageToken — must be a Graph API URL.");
+            return;
+        };
+    } else blk: {
+        const query = ctx.getStringArg(args, "query", "Missing 'query' argument.") orelse return;
+        const size = json_rpc.getStringArg(args, "size") orelse "25";
+        const from = json_rpc.getStringArg(args, "from") orelse "0";
+        const received_after = json_rpc.getStringArg(args, "receivedAfter");
+        const received_before = json_rpc.getStringArg(args, "receivedBefore");
+        const folder = json_rpc.getStringArg(args, "folder");
+
+        const encoded = url_util.encode(ctx.allocator, query) catch return;
+        defer ctx.allocator.free(encoded);
+
+        // $search values must be wrapped in %22-escaped double-quotes per the
+        // Graph spec; otherwise multi-word searches fail.
+        var path_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
+        const pw = &path_buf.writer;
+
+        if (folder) |f| {
+            pw.print("/me/mailFolders/{s}/messages?", .{f}) catch return;
+        } else {
+            pw.writeAll("/me/messages?") catch return;
+        }
+        pw.print("$search=%22{s}%22&$top={s}&$skip={s}&$select=id,subject,from,receivedDateTime,bodyPreview,webLink", .{ encoded, size, from }) catch return;
+
+        // $filter is appended only if a date filter is present. Note: Graph
+        // requires $filter clauses with ge/le on receivedDateTime to be in
+        // ISO 8601 with offset (e.g. 2026-01-01T00:00:00Z). Caller's
+        // responsibility — we pass through verbatim.
+        if (received_after != null or received_before != null) {
+            pw.writeAll("&$filter=") catch return;
+            var first = true;
+            if (received_after) |ra| {
+                const enc_ra = url_util.encode(ctx.allocator, ra) catch return;
+                defer ctx.allocator.free(enc_ra);
+                pw.print("receivedDateTime%20ge%20{s}", .{enc_ra}) catch return;
+                first = false;
+            }
+            if (received_before) |rb| {
+                if (!first) pw.writeAll("%20and%20") catch return;
+                const enc_rb = url_util.encode(ctx.allocator, rb) catch return;
+                defer ctx.allocator.free(enc_rb);
+                pw.print("receivedDateTime%20le%20{s}", .{enc_rb}) catch return;
+            }
+        }
+
+        break :blk path_buf.toOwnedSlice() catch return;
+    };
+    defer if (page_token == null) ctx.allocator.free(path);
 
     const headers = [_]std.http.Header{
         .{ .name = "ConsistencyLevel", .value = "eventual" },
@@ -388,7 +505,7 @@ pub fn handleSearchEmails(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(response);
 
-    if (formatter.summarizeArray(ctx.allocator, response, &list_email_fields)) |summary| {
+    if (summarizeWithNextLink(ctx.allocator, response, &list_email_fields)) |summary| {
         defer ctx.allocator.free(summary);
         ctx.sendResult(summary);
     } else {

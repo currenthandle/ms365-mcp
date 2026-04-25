@@ -167,6 +167,9 @@ pub fn main() !void {
         try cases.testEmailReplyLifecycle(&client);
         try cases.testEmailForwardLifecycle(&client);
         try cases.testEmailSearch(&client);
+        try cases.testEmailSearchSizeParam(&client);
+        try cases.testListEmailsTopParam(&client);
+        try cases.testListEmailsNextLink(&client);
         try cases.testListMailFolders(&client);
         try cases.testMarkReadLifecycle(&client);
         try cases.testMoveEmailLifecycle(&client);
