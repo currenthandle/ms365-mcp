@@ -177,6 +177,67 @@ pub fn handleSendEmail(ctx: ToolContext) void {
     ctx.sendResult("Email sent successfully.");
 }
 
+/// Delete multiple emails in one call. Takes an array of emailIds and
+/// issues a DELETE per id. Returns a count of successful deletions plus
+/// any per-id errors. Used by the e2e suite to clean up lingering test
+/// emails from pre-fix runs, and generally useful when an agent needs
+/// to clear out search results without 25 separate delete calls.
+pub fn handleBatchDeleteEmails(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide emailIds (array).") orelse return;
+
+    const ids_val = args.get("emailIds") orelse {
+        ctx.sendResult("Missing 'emailIds' argument — pass an array of email IDs.");
+        return;
+    };
+    const ids_arr = switch (ids_val) {
+        .array => |a| a,
+        else => {
+            ctx.sendResult("'emailIds' must be an array of strings.");
+            return;
+        },
+    };
+
+    var ok: u32 = 0;
+    var failed: u32 = 0;
+    var first_err_buf: [256]u8 = undefined;
+    var first_err: ?[]const u8 = null;
+
+    for (ids_arr.items) |item| {
+        const email_id = switch (item) {
+            .string => |s| s,
+            else => {
+                failed += 1;
+                continue;
+            },
+        };
+        const path = std.fmt.allocPrint(ctx.allocator, "/me/messages/{s}", .{email_id}) catch {
+            failed += 1;
+            continue;
+        };
+        defer ctx.allocator.free(path);
+        graph.delete(ctx.allocator, ctx.io, token, path) catch |err| {
+            failed += 1;
+            if (first_err == null) {
+                first_err = std.fmt.bufPrint(&first_err_buf, "{}", .{err}) catch null;
+            }
+            continue;
+        };
+        ok += 1;
+    }
+
+    const msg = if (failed == 0)
+        std.fmt.allocPrint(ctx.allocator, "Deleted {d} email(s).", .{ok}) catch return
+    else
+        std.fmt.allocPrint(
+            ctx.allocator,
+            "Deleted {d}/{d} email(s). {d} failed (first error: {s}).",
+            .{ ok, ok + failed, failed, first_err orelse "unknown" },
+        ) catch return;
+    defer ctx.allocator.free(msg);
+    ctx.sendResult(msg);
+}
+
 /// Delete an email by ID.
 pub fn handleDeleteEmail(ctx: ToolContext) void {
     const token = ctx.requireAuth() orelse return;
