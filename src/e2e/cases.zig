@@ -262,19 +262,24 @@ pub fn testSendEmailLifecycle(client: *McpClient) !void {
         return;
     }
 
-    // Poll for the email to arrive — up to 30s. Self-sent email routinely
-    // takes 5-15s through Exchange's routing even for a same-box delivery.
+    // Poll via search-emails (searches all folders, not just top-10
+    // inbox). Self-sent mail often lands in a subfolder via inbox
+    // rules and noisy inboxes push new mail off the top-10 list in
+    // seconds. search uses Exchange's full-text index which covers
+    // everything.
     var email_id: ?[]u8 = null;
     var poll_attempts: usize = 0;
-    while (poll_attempts < 10 and email_id == null) : (poll_attempts += 1) {
+    while (poll_attempts < 60 and email_id == null) : (poll_attempts += 1) {
         _ = std.c.nanosleep(&.{ .sec = 3, .nsec = 0 }, null);
-        const list = try client.callTool("list-emails", null);
-        defer list.deinit();
-        const list_text = McpClient.getResultText(list) orelse continue;
-        email_id = helpers.findEmailBySubject(client.allocator, list_text, "DISREGARD AUTOMATED TEST EMAIL");
+        // Search for a unique word from the body; Graph's $search
+        // across "subject:" with bracketed tokens can miss.
+        const search = try client.callTool("search-emails", "{\"query\":\"e2e test suite\"}");
+        defer search.deinit();
+        const search_text = McpClient.getResultText(search) orelse continue;
+        email_id = helpers.findEmailBySubject(client.allocator, search_text, "DISREGARD AUTOMATED TEST EMAIL");
     }
     const email_id_found = email_id orelse {
-        fail("send-email cleanup", "test email never arrived in inbox after 30s");
+        fail("send-email cleanup", "test email never appeared in mailbox search after 180s");
         return;
     };
     defer client.allocator.free(email_id_found);
@@ -885,10 +890,37 @@ pub fn testChannelLifecycle(client: *McpClient) !void {
         return;
     }
 
-    // Find a message ID for getting replies.
-    const msg_id = helpers.extractFirstMessageId(client.allocator, msgs_text) orelse {
-        skip("get-channel-message-replies", "no messages in channel — test post not implemented yet");
-        return;
+    // Find a message ID for getting replies. If the channel is empty,
+    // seed one ourselves so the test runs every time. `seeded` tracks
+    // whether we posted it (so we can delete it at the end).
+    var seeded = false;
+    const msg_id = helpers.extractFirstMessageId(client.allocator, msgs_text) orelse blk: {
+        var post_buf: [1024]u8 = undefined;
+        const post_args = std.fmt.bufPrint(
+            &post_buf,
+            "{{\"teamId\":\"{s}\",\"channelId\":\"{s}\",\"message\":\"[DISREGARD AUTOMATED TEST SEED]\"}}",
+            .{ team_id, channel_id },
+        ) catch return;
+        const post = try client.callTool("post-channel-message", post_args);
+        defer post.deinit();
+        _ = McpClient.getResultText(post) orelse {
+            fail("channel setup", "post-channel-message returned no text");
+            return;
+        };
+        // post-channel-message returns only a confirmation string, not
+        // the new message id, so re-list to find our seed.
+        const relist = try client.callTool("list-channel-messages", msgs_args);
+        defer relist.deinit();
+        const relist_text = McpClient.getResultText(relist) orelse {
+            fail("channel setup", "list-channel-messages returned no text after seed");
+            return;
+        };
+        const id = helpers.findMessageByContent(client.allocator, relist_text, "DISREGARD AUTOMATED TEST SEED") orelse {
+            fail("channel setup", "could not find seeded message after posting");
+            return;
+        };
+        seeded = true;
+        break :blk id;
     };
     defer client.allocator.free(msg_id);
 
@@ -907,6 +939,20 @@ pub fn testChannelLifecycle(client: *McpClient) !void {
         pass("get-channel-message-replies");
     } else {
         fail("get-channel-message-replies", "response does not look like formatted replies");
+    }
+
+    // Clean up the seed message if we posted one.
+    if (seeded) {
+        var del_buf: [1024]u8 = undefined;
+        const del_args = std.fmt.bufPrint(
+            &del_buf,
+            "{{\"teamId\":\"{s}\",\"channelId\":\"{s}\",\"messageId\":\"{s}\"}}",
+            .{ team_id, channel_id, msg_id },
+        ) catch return;
+        const del = try client.callTool("delete-channel-message", del_args);
+        defer del.deinit();
+        // Not asserting — this is cleanup; a failure to delete would be
+        // caught by a dedicated delete-channel-message test.
     }
 }
 
@@ -939,15 +985,37 @@ pub fn testReplyToChannelMessage(client: *McpClient) !void {
     };
     defer client.allocator.free(channel_id);
 
-    // List messages to find one to reply to.
+    // List messages; seed one if the channel is empty so this test is
+    // self-sufficient.
     var msgs_buf: [1024]u8 = undefined;
     const msgs_args = std.fmt.bufPrint(&msgs_buf, "{{\"teamId\":\"{s}\",\"channelId\":\"{s}\",\"top\":\"5\"}}", .{ team_id, channel_id }) catch return;
     const msgs = try client.callTool("list-channel-messages", msgs_args);
     defer msgs.deinit();
-    const msgs_text = McpClient.getResultText(msgs) orelse return;
-    const msg_id = helpers.extractFirstMessageId(client.allocator, msgs_text) orelse {
-        skip("reply-to-channel-message", "no messages in channel to reply to");
+    const msgs_text = McpClient.getResultText(msgs) orelse {
+        fail("reply-to-channel-message setup", "list-channel-messages returned no text");
         return;
+    };
+
+    var seeded = false;
+    const msg_id = helpers.extractFirstMessageId(client.allocator, msgs_text) orelse blk: {
+        var post_buf: [1024]u8 = undefined;
+        const post_args = std.fmt.bufPrint(
+            &post_buf,
+            "{{\"teamId\":\"{s}\",\"channelId\":\"{s}\",\"message\":\"[DISREGARD AUTOMATED TEST SEED]\"}}",
+            .{ team_id, channel_id },
+        ) catch return;
+        const post = try client.callTool("post-channel-message", post_args);
+        defer post.deinit();
+        const post_text = McpClient.getResultText(post) orelse {
+            fail("reply-to-channel-message setup", "could not post seed message");
+            return;
+        };
+        const id = helpers.extractId(client.allocator, post_text) orelse {
+            fail("reply-to-channel-message setup", "post-channel-message returned no id");
+            return;
+        };
+        seeded = true;
+        break :blk id;
     };
     defer client.allocator.free(msg_id);
 
@@ -966,6 +1034,19 @@ pub fn testReplyToChannelMessage(client: *McpClient) !void {
         pass("reply-to-channel-message");
     } else {
         fail("reply-to-channel-message", reply_text);
+    }
+
+    // Clean up the seed message if we posted one. The reply goes with
+    // it since replies live under the parent post.
+    if (seeded) {
+        var del_buf: [1024]u8 = undefined;
+        const del_args = std.fmt.bufPrint(
+            &del_buf,
+            "{{\"teamId\":\"{s}\",\"channelId\":\"{s}\",\"messageId\":\"{s}\"}}",
+            .{ team_id, channel_id, msg_id },
+        ) catch return;
+        const del = try client.callTool("delete-channel-message", del_args);
+        defer del.deinit();
     }
 }
 

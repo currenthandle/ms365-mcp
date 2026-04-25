@@ -18,15 +18,35 @@ pub fn extractAfterMarker(allocator: Allocator, text: []const u8, marker: []cons
     return allocator.dupe(u8, text[val_start..val_end]) catch return null;
 }
 
-/// Find an email ID by matching a subject fragment in the formatted
-/// list-emails output. Each email is one line of the form:
-///   subject: ... | from: ... | received: ... | id: AAA... | webUrl: ...
-/// The id value is terminated by the next " | " separator.
+/// Find an email ID by matching a subject fragment in formatter output.
+/// The formatter emits multi-line records: the subject is on the first
+/// line, but body previews with embedded newlines push the id onto a
+/// later line that starts with " | id:" or "id:". We walk line by line,
+/// treating the text between subject hits as a single logical record.
 pub fn findEmailBySubject(allocator: Allocator, formatted_text: []const u8, subject_fragment: []const u8) ?[]u8 {
     var lines = std.mem.splitScalar(u8, formatted_text, '\n');
+    var in_match = false;
     while (lines.next()) |line| {
-        if (std.mem.indexOf(u8, line, subject_fragment) == null) continue;
-        if (extractIdFromFormattedLine(allocator, line)) |id| return id;
+        if (std.mem.indexOf(u8, line, subject_fragment) != null) {
+            if (extractIdFromFormattedLine(allocator, line)) |id| return id;
+            in_match = true;
+            continue;
+        }
+        // A blank line ends a formatter record. If we had matched a
+        // subject and haven't found an id yet, keep scanning until
+        // either the id arrives or the next record starts with a new
+        // "subject:" that doesn't contain the fragment.
+        if (in_match) {
+            if (std.mem.indexOf(u8, line, "id:") != null) {
+                if (extractIdFromFormattedLine(allocator, line)) |id| return id;
+            }
+            // A new "subject:" without the fragment ends the match window.
+            if (std.mem.startsWith(u8, line, "subject:") and
+                std.mem.indexOf(u8, line, subject_fragment) == null)
+            {
+                in_match = false;
+            }
+        }
     }
     return null;
 }
