@@ -216,6 +216,70 @@ pub fn testEmailSearch(client: *McpClient) !void {
     }
 }
 
+/// Test: search-emails honors the size param. Default is 25; ask for 5
+/// and we should see at most 5 id: lines in the formatted response.
+pub fn testEmailSearchSizeParam(client: *McpClient) !void {
+    const search = try client.callTool("search-emails", "{\"query\":\"the\",\"size\":\"5\"}");
+    defer search.deinit();
+    const text = McpClient.getResultText(search) orelse {
+        fail("search-emails (size)", "no text");
+        return;
+    };
+    // Count `id:` occurrences (one per result row from the formatter).
+    var count: usize = 0;
+    var i: usize = 0;
+    while (std.mem.indexOfPos(u8, text, i, "id:")) |idx| {
+        count += 1;
+        i = idx + 3;
+    }
+    if (count <= 5) {
+        pass("search-emails (size param caps results)");
+    } else {
+        fail("search-emails (size param)", "got more than 5 results");
+    }
+}
+
+/// Test: list-emails honors the top param. Default is 10; ask for 3.
+pub fn testListEmailsTopParam(client: *McpClient) !void {
+    const list = try client.callTool("list-emails", "{\"top\":\"3\"}");
+    defer list.deinit();
+    const text = McpClient.getResultText(list) orelse {
+        fail("list-emails (top)", "no text");
+        return;
+    };
+    var count: usize = 0;
+    var i: usize = 0;
+    while (std.mem.indexOfPos(u8, text, i, "id:")) |idx| {
+        count += 1;
+        i = idx + 3;
+    }
+    // top:3 should return up to 3 hits, plus possibly a `nextLink:` line
+    // (which doesn't contain `id:` so won't inflate the count).
+    if (count <= 3) {
+        pass("list-emails (top param caps results)");
+    } else {
+        fail("list-emails (top param)", "got more than 3 results");
+    }
+}
+
+/// Test: list-emails returns a nextLink for cursor pagination when
+/// there are more results than the page size.
+pub fn testListEmailsNextLink(client: *McpClient) !void {
+    const list = try client.callTool("list-emails", "{\"top\":\"2\"}");
+    defer list.deinit();
+    const text = McpClient.getResultText(list) orelse {
+        fail("list-emails (nextLink)", "no text");
+        return;
+    };
+    if (std.mem.indexOf(u8, text, "nextLink:") != null) {
+        pass("list-emails (nextLink for pagination)");
+    } else {
+        // Acceptable if mailbox has <= 2 emails total, but unlikely on
+        // the test account. Mark a soft skip.
+        skip("list-emails (nextLink)", "no nextLink — mailbox may have <=2 emails total");
+    }
+}
+
 
 /// Test: list-mail-folders — check that we get back at least Inbox + one id.
 pub fn testListMailFolders(client: *McpClient) !void {

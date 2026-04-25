@@ -105,8 +105,20 @@ const forward_email_props = [_]PropSpec{
     .{ .name = "to", .type = "array", .description = "Recipients to forward to — required, at least one" },
 };
 
+const list_emails_props = [_]PropSpec{
+    .{ .name = "top", .type = "string", .description = "Optional page size (1-1000, default 10). Pass a larger number to get more emails in one call." },
+    .{ .name = "folder", .type = "string", .description = "Optional folder to scope to. Pass a folder ID from list-mail-folders, or a well-known name: 'inbox', 'sentitems', 'drafts', 'deleteditems', 'archive'. Omit to search across all folders." },
+    .{ .name = "pageToken", .type = "string", .description = "Optional cursor token — pass the nextLink value from a previous response to get the next page." },
+};
+
 const search_emails_props = [_]PropSpec{
-    .{ .name = "query", .type = "string", .description = "Keyword or phrase to search for (matches subject, body, sender, and recipient fields)" },
+    .{ .name = "query", .type = "string", .description = "Keyword or phrase to search for. Searches the entire mailbox (every folder) — matches subject, body, sender, recipient. Like a web search, returns relevance-ranked hits, no scope cap." },
+    .{ .name = "size", .type = "string", .description = "Optional page size (1-1000, default 25). Raise this if you want more matches in one call instead of paginating." },
+    .{ .name = "from", .type = "string", .description = "Optional offset for pagination (default 0). Prefer pageToken when chaining calls." },
+    .{ .name = "receivedAfter", .type = "string", .description = "Optional ISO 8601 date filter — only return mail received on or after this timestamp (e.g. 2026-01-01T00:00:00Z)." },
+    .{ .name = "receivedBefore", .type = "string", .description = "Optional ISO 8601 date filter — only return mail received on or before this timestamp." },
+    .{ .name = "folder", .type = "string", .description = "Optional folder ID or well-known name to restrict the search to a single folder." },
+    .{ .name = "pageToken", .type = "string", .description = "Optional cursor token — pass the nextLink value from a previous response to get the next page of matches." },
 };
 
 const mark_read_email_props = [_]PropSpec{
@@ -470,11 +482,12 @@ const all_tools = [_]ToolSpec{
     // --- Email ---
     .{
         .name = "list-emails",
-        .description = "List recent emails from Microsoft 365 Outlook inbox. Returns subject, sender, date, and preview for the 10 most recent messages.",
+        .description = "List recent emails from Microsoft 365 Outlook. Default returns the 10 most recent inbox messages; pass `top` for more (1-1000), `folder` to scope to Sent/Drafts/etc, `pageToken` to follow nextLink for cursor pagination. To find emails by keyword across the entire mailbox, use search-emails instead.",
+        .props = &list_emails_props,
     },
     .{
         .name = "read-email",
-        .description = "Read the full content of an email by ID. Returns subject, sender, recipients, CC, date, full body, and read status. Use list-emails first to get the email ID.",
+        .description = "Read the full content of an email by ID. Returns subject, sender, recipients, CC, date, full body, and read status. Use list-emails or search-emails first to get the email ID. To respond, use reply-email (sender only), reply-all-email (everyone on the thread), or forward-email.",
         .props = &read_email_props,
         .required = &.{"emailId"},
     },
@@ -504,7 +517,7 @@ const all_tools = [_]ToolSpec{
     },
     .{
         .name = "search-emails",
-        .description = "Search the user's mailbox for emails matching a keyword. Matches subject, body, sender, and recipient fields. Returns up to 25 matches.",
+        .description = "Search the user's entire mailbox for emails matching a keyword. Hits Microsoft Graph's $search index — every folder, no scope cap, relevance-ranked results (like a web search). Default page is 25 matches; pass `size` to raise (1-1000), `from` or `pageToken` to paginate, `receivedAfter`/`receivedBefore` to narrow by date, `folder` to scope to one folder. To respond to a match, pipe the emailId into reply-email, reply-all-email, or forward-email.",
         .props = &search_emails_props,
         .required = &.{"query"},
     },
