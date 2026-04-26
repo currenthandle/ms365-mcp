@@ -118,7 +118,7 @@ pub fn build(b: *std.Build) void {
 ///   "v0.2.0-3-g61cb00e-dirty"  — 3 commits past v0.2.0, working tree dirty
 ///   "v0.2.0"                  — fallback when not in a git checkout
 fn computeVersion(b: *std.Build) []const u8 {
-    const fallback = "v0.2.0";
+    const fallback = "v0.1.0";
 
     // b.runAllowFail captures stdout on success or returns an error. We
     // pass --tags so non-annotated tags work too, --always so we get a
