@@ -113,10 +113,10 @@ pub fn build(b: *std.Build) void {
 /// a git checkout (e.g. someone vendored the source tarball).
 ///
 /// Examples of what this returns:
-///   "v0.2.0"                  — exact tag, clean tree
-///   "v0.2.0-3-g61cb00e"        — 3 commits past v0.2.0
-///   "v0.2.0-3-g61cb00e-dirty"  — 3 commits past v0.2.0, working tree dirty
-///   "v0.2.0"                  — fallback when not in a git checkout
+///   "v0.1.0-rc.1"                  — exact tag, clean tree
+///   "v0.1.0-rc.1-3-g61cb00e"        — 3 commits past v0.1.0-rc.1
+///   "v0.1.0-rc.1-3-g61cb00e-dirty"  — 3 commits past v0.1.0-rc.1, working tree dirty
+///   "v0.1.0"                       — fallback when not in a git checkout
 fn computeVersion(b: *std.Build) []const u8 {
     const fallback = "v0.1.0";
 
