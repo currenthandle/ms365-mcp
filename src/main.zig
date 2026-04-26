@@ -40,6 +40,7 @@ const sharepoint_tools = @import("tools/sharepoint.zig");
 const onedrive_tools = @import("tools/onedrive.zig");
 const user_tools = @import("tools/users.zig");
 const ToolContext = @import("tools/context.zig").ToolContext;
+const version = @import("version");
 
 // Type aliases — keeps function signatures cleaner.
 const Allocator = std.mem.Allocator;
@@ -134,10 +135,38 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "get-profile", user_tools.handleGetProfile },
 });
 
-pub fn main() !void {
+pub fn main(init: std.process.Init.Minimal) !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
+
+    // CLI flag: `ms365-mcp --version` (or `-v`) prints the build-time
+    // version string and exits. Useful for testers debugging "which
+    // binary is this?" without spinning up the MCP protocol. Comes
+    // first so it works even before MS365_CLIENT_ID / MS365_TENANT_ID
+    // are set — those are MCP-server requirements, not version-print
+    // requirements.
+    {
+        var args_iter = init.args.iterateAllocator(allocator) catch return error.ArgsFailed;
+        defer args_iter.deinit();
+        // First arg is the program path; skip it.
+        _ = args_iter.next();
+        if (args_iter.next()) |arg| {
+            if (std.mem.eql(u8, arg, "--version") or std.mem.eql(u8, arg, "-v")) {
+                // Write directly to libc's stdout fd so the output is
+                // pipeable. std.debug.print goes to stderr, which would
+                // break shell idioms like `if [ "$(ms365-mcp --version)" = "v0.2.0" ]`.
+                // We're already linked against libc; use write(2) directly
+                // rather than spinning up an Io context just for one print.
+                const c_write = struct {
+                    extern "c" fn write(fd: c_int, buf: [*]const u8, count: usize) isize;
+                }.write;
+                _ = c_write(1, version.VERSION.ptr, version.VERSION.len);
+                _ = c_write(1, "\n", 1);
+                return;
+            }
+        }
+    }
 
     std.debug.print("ms-mcp: server starting\n", .{});
 

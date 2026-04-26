@@ -1,6 +1,7 @@
 // types.zig — JSON-RPC and MCP protocol types.
 
 const std = @import("std");
+const version_mod = @import("version");
 
 /// A JSON-RPC 2.0 response wrapper. Generic over the result type
 /// so we can reuse it for different response shapes.
@@ -56,10 +57,13 @@ pub const Capabilities = struct {
     tools: struct {} = .{}, // empty object — no special tool capabilities
 };
 
-/// Identifies this server to the client.
+/// Identifies this server to the client. `version` is set at build time
+/// from `git describe`, so a tester reading the initialize response can
+/// see exactly which commit the binary was built from. Public so other
+/// modules (e.g. the --version CLI flag in main.zig) can reuse it.
 pub const ServerInfo = struct {
     name: []const u8 = "ms365-mcp",
-    version: []const u8 = "0.1.0",
+    version: []const u8 = version_mod.VERSION,
 };
 
 /// The result of a "tools/list" response.
