@@ -48,6 +48,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          # Hyphenated tags (e.g. v0.2.0-rc.1) are pre-releases by convention.
+          # GitHub's /releases/latest endpoint excludes pre-releases, which
+          # means install.sh keeps pulling the last stable tag and doesn't
+          # ship release candidates to non-tester users by accident.
+          prerelease: ${{ contains(github.ref, '-') }}
           files: |
             ms365-mcp-macos-arm64
             ms365-mcp-macos-x86_64
