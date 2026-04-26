@@ -6,6 +6,7 @@ const graph = @import("../graph.zig");
 const json_rpc = @import("../json_rpc.zig");
 const state_mod = @import("../state.zig");
 const tz = @import("../timezone.zig");
+const date_util = @import("../date_util.zig");
 const ToolContext = @import("context.zig").ToolContext;
 const formatter = @import("../formatter.zig");
 
@@ -18,16 +19,16 @@ const ObjectMap = std.json.ObjectMap;
 // .dateTime string from each. Location is {displayName}.
 const list_event_fields = [_]formatter.FieldSpec{
     .{ .path = "subject", .label = "subject" },
-    .{ .path = "start.dateTime", .label = "start" },
-    .{ .path = "end.dateTime", .label = "end" },
+    .{ .path = "start.dateTime", .label = "start", .is_date = true },
+    .{ .path = "end.dateTime", .label = "end", .is_date = true },
     .{ .path = "location.displayName", .label = "location" },
     .{ .path = "organizer.emailAddress.name", .label = "organizer" },
 };
 
 const get_event_fields = [_]formatter.FieldSpec{
     .{ .path = "subject", .label = "subject" },
-    .{ .path = "start.dateTime", .label = "start" },
-    .{ .path = "end.dateTime", .label = "end" },
+    .{ .path = "start.dateTime", .label = "start", .is_date = true },
+    .{ .path = "end.dateTime", .label = "end", .is_date = true },
     .{ .path = "location.displayName", .label = "location" },
     .{ .path = "organizer.emailAddress.name", .label = "organizer" },
     .{ .path = "body.content", .label = "body", .newline_after = true },
@@ -287,8 +288,8 @@ fn dottedString(root: ObjectMap, segments: []const []const u8) []const u8 {
 
 const find_times_suggestion_fields = [_]formatter.FieldSpec{
     .{ .path = "confidence", .label = "confidence" },
-    .{ .path = "meetingTimeSlot.start.dateTime", .label = "start" },
-    .{ .path = "meetingTimeSlot.end.dateTime", .label = "end" },
+    .{ .path = "meetingTimeSlot.start.dateTime", .label = "start", .is_date = true },
+    .{ .path = "meetingTimeSlot.end.dateTime", .label = "end", .is_date = true },
 };
 
 const get_schedule_slot_fields = [_]formatter.FieldSpec{
@@ -417,7 +418,19 @@ pub fn handleFindMeetingTimes(ctx: ToolContext) void {
         }
         const start_dt = dottedString(obj, &.{ "meetingTimeSlot", "start", "dateTime" });
         const end_dt = dottedString(obj, &.{ "meetingTimeSlot", "end", "dateTime" });
-        w.print("start: {s} | end: {s}\n", .{ start_dt, end_dt }) catch continue;
+        // Pre-compute weekday (Mon/Tue/...) so the agent doesn't have to.
+        // LLMs are unreliable on day-of-week math more than a few days
+        // out — without this label, find-meeting-times → narration was
+        // saying "Sunday" for Monday slots.
+        const start_wd = date_util.weekdayFromIso(start_dt);
+        const end_wd = date_util.weekdayFromIso(end_dt);
+        w.writeAll("start: ") catch continue;
+        w.writeAll(start_dt) catch continue;
+        if (start_wd) |wd| w.print(" ({s})", .{wd}) catch continue;
+        w.writeAll(" | end: ") catch continue;
+        w.writeAll(end_dt) catch continue;
+        if (end_wd) |wd| w.print(" ({s})", .{wd}) catch continue;
+        w.writeAll("\n") catch continue;
     }
     const out = buf.toOwnedSlice() catch return;
     defer ctx.allocator.free(out);
