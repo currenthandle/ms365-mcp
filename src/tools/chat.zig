@@ -12,7 +12,7 @@ const Allocator = std.mem.Allocator;
 
 // Fields surfaced from /me/chats/{id}/messages.
 const chat_message_fields = [_]formatter.FieldSpec{
-    .{ .path = "createdDateTime", .label = "sent" },
+    .{ .path = "createdDateTime", .label = "sent", .is_date = true },
     .{ .path = "from.user.displayName", .label = "from" },
     .{ .path = "body.content", .label = "body", .newline_after = true },
 };

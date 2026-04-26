@@ -21,14 +21,14 @@ const Array = std.json.Array;
 const list_email_fields = [_]formatter.FieldSpec{
     .{ .path = "subject", .label = "subject" },
     .{ .path = "from.emailAddress.address", .label = "from" },
-    .{ .path = "receivedDateTime", .label = "received" },
+    .{ .path = "receivedDateTime", .label = "received", .is_date = true },
     .{ .path = "bodyPreview", .label = "preview", .newline_after = true },
 };
 
 const read_email_fields = [_]formatter.FieldSpec{
     .{ .path = "subject", .label = "subject" },
     .{ .path = "from.emailAddress.address", .label = "from" },
-    .{ .path = "receivedDateTime", .label = "received" },
+    .{ .path = "receivedDateTime", .label = "received", .is_date = true },
     // body is an object {contentType, content} — we surface just the content.
     .{ .path = "body.content", .label = "body", .newline_after = true },
     .{ .path = "isRead", .label = "isRead" },

@@ -19,7 +19,7 @@ const team_or_channel_fields = [_]formatter.FieldSpec{
 
 // Fields surfaced from channel messages + replies (same shape for both).
 const channel_message_fields = [_]formatter.FieldSpec{
-    .{ .path = "createdDateTime", .label = "sent" },
+    .{ .path = "createdDateTime", .label = "sent", .is_date = true },
     .{ .path = "from.user.displayName", .label = "from" },
     .{ .path = "subject", .label = "subject" },
     .{ .path = "body.content", .label = "body", .newline_after = true },

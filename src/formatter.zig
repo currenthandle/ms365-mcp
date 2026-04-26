@@ -25,6 +25,7 @@
 //     responsible for freeing the buffer.
 
 const std = @import("std");
+const date_util = @import("date_util.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
@@ -44,6 +45,14 @@ pub const FieldSpec = struct {
     /// separator. Useful for body previews that would otherwise run off
     /// the right side of the summary line.
     newline_after: bool = false,
+
+    /// If true, treat the field's value as an ISO 8601 date or datetime
+    /// and append a 3-letter weekday abbreviation in parens, e.g.
+    ///   "received: 2026-04-27T15:00:00 (Mon)"
+    /// LLMs are unreliable at computing day-of-week from a raw date —
+    /// computing it server-side eliminates a class of agent narration
+    /// bug where the agent says "Sunday" for a Monday slot.
+    is_date: bool = false,
 };
 
 /// Summarize a Graph array response of the shape `{"value": [...]}`.
@@ -130,6 +139,16 @@ fn writeItem(w: *std.Io.Writer, obj: ObjectMap, fields: []const FieldSpec) void 
             w.print("{s}: ", .{f.label}) catch return;
         }
         w.writeAll(val) catch return;
+
+        // Pre-compute weekday for date fields so the agent doesn't have to.
+        // weekdayFromIso returns null for anything not shaped like an ISO
+        // date prefix, in which case we silently skip — better to emit the
+        // raw value than corrupt it with a wrong label.
+        if (f.is_date) {
+            if (date_util.weekdayFromIso(val)) |wd| {
+                w.print(" ({s})", .{wd}) catch return;
+            }
+        }
 
         if (f.newline_after) {
             w.writeAll("\n") catch return;
