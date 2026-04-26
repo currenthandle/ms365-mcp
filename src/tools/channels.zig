@@ -4,6 +4,7 @@ const std = @import("std");
 const types = @import("../types.zig");
 const graph = @import("../graph.zig");
 const json_rpc = @import("../json_rpc.zig");
+const binary_download = @import("../binary_download.zig");
 const formatter = @import("../formatter.zig");
 const ToolContext = @import("context.zig").ToolContext;
 
@@ -430,6 +431,78 @@ pub fn handleDeleteChannelReply(ctx: ToolContext) void {
     };
 
     ctx.sendResult("Channel reply deleted.");
+}
+
+/// Download an inline image (or other hosted content) from a Teams
+/// channel message and write the bytes to a local temp file.
+///
+/// Channel hosted contents live at:
+///   GET /teams/{teamId}/channels/{channelId}/messages/{msgId}/hostedContents/{contentId}/$value
+///
+/// Two call shapes:
+///   1. Pass `url` — the full graph.microsoft.com .../hostedContents/.../$value
+///      URL pulled straight from the message body's `<img src=...>`.
+///   2. Pass `teamId` + `channelId` + `messageId` + `contentId`.
+pub fn handleDownloadChannelImage(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide either 'url' or all of teamId+channelId+messageId+contentId.") orelse return;
+
+    const path = path: {
+        if (json_rpc.getStringArg(args, "url")) |url| {
+            // Same /v1.0/ stripping as the chat helper — both paths sit
+            // under the same Graph version prefix.
+            const v1_marker = "/v1.0";
+            const idx = std.mem.indexOf(u8, url, v1_marker) orelse {
+                ctx.sendResult("Could not parse the hostedContents URL. Expected something like https://graph.microsoft.com/v1.0/teams/.../hostedContents/.../$value");
+                return;
+            };
+            const after_version = url[idx + v1_marker.len ..];
+            if (after_version.len == 0 or after_version[0] != '/') {
+                ctx.sendResult("Hosted-content URL is missing the path after /v1.0.");
+                return;
+            }
+            break :path ctx.allocator.dupe(u8, after_version) catch return;
+        }
+        const team_id = ctx.getPathArg(args, "teamId", "Missing 'teamId' (or pass 'url' instead).") orelse return;
+        const channel_id = ctx.getPathArg(args, "channelId", "Missing 'channelId' (or pass 'url' instead).") orelse return;
+        const message_id = ctx.getPathArg(args, "messageId", "Missing 'messageId' (or pass 'url' instead).") orelse return;
+        const content_id = ctx.getPathArg(args, "contentId", "Missing 'contentId' (or pass 'url' instead).") orelse return;
+        break :path std.fmt.allocPrint(
+            ctx.allocator,
+            "/teams/{s}/channels/{s}/messages/{s}/hostedContents/{s}/$value",
+            .{ team_id, channel_id, message_id, content_id },
+        ) catch return;
+    };
+    defer ctx.allocator.free(path);
+
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
+        return;
+    };
+    defer ctx.allocator.free(response);
+
+    const name_override = json_rpc.getStringArg(args, "name");
+    const default_name = "channel-image.bin";
+    const name = if (name_override) |n| n else default_name;
+
+    const local_path = binary_download.saveToTempFile(
+        ctx.allocator,
+        ctx.io,
+        name,
+        response,
+    ) catch {
+        ctx.sendResult("Failed to write hosted content to a temp path.");
+        return;
+    };
+    defer ctx.allocator.free(local_path);
+
+    const msg = std.fmt.allocPrint(
+        ctx.allocator,
+        "Downloaded {d} bytes | local_path: {s}",
+        .{ response.len, local_path },
+    ) catch return;
+    defer ctx.allocator.free(msg);
+    ctx.sendResult(msg);
 }
 
 // ---------------------------------------------------------------

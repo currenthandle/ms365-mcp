@@ -91,6 +91,7 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "create-chat", chat_tools.handleCreateChat },
     .{ "search-chat-messages", chat_tools.handleSearchChatMessages },
     .{ "delete-chat-message", chat_tools.handleDeleteChatMessage },
+    .{ "download-chat-image", chat_tools.handleDownloadChatImage },
     // --- Calendar ---
     .{ "get-calendar-event", calendar_tools.handleGetCalendarEvent },
     .{ "list-calendar-events", calendar_tools.handleListCalendarEvents },
@@ -110,6 +111,7 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "reply-to-channel-message", channel_tools.handleReplyToChannelMessage },
     .{ "delete-channel-message", channel_tools.handleDeleteChannelMessage },
     .{ "delete-channel-reply", channel_tools.handleDeleteChannelReply },
+    .{ "download-channel-image", channel_tools.handleDownloadChannelImage },
     // --- SharePoint ---
     .{ "search-sharepoint-sites", sharepoint_tools.handleSearchSites },
     .{ "list-sharepoint-drives", sharepoint_tools.handleListDrives },
