@@ -4,6 +4,7 @@ const std = @import("std");
 const types = @import("../types.zig");
 const graph = @import("../graph.zig");
 const json_rpc = @import("../json_rpc.zig");
+const binary_download = @import("../binary_download.zig");
 const ToolContext = @import("context.zig").ToolContext;
 const formatter = @import("../formatter.zig");
 
@@ -464,4 +465,115 @@ pub fn handleDeleteChatMessage(ctx: ToolContext) void {
     };
 
     ctx.sendResult("Chat message deleted.");
+}
+
+/// Download an inline image (or other hosted content) from a Teams chat
+/// message and write the bytes to a local temp file.
+///
+/// Inline images pasted into Teams chats live at:
+///   GET /chats/{chatId}/messages/{msgId}/hostedContents/{contentId}/$value
+///
+/// You can call this two ways:
+///   1. Pass `url` — the full https://graph.microsoft.com/.../hostedContents/.../$value
+///      URL pulled straight from the message body's `<img src=...>`. Easiest
+///      when the agent is parsing chat messages.
+///   2. Pass `chatId` + `messageId` + `contentId` separately.
+///
+/// Optional `name` overrides the default filename. Returns `local_path:`
+/// pointing at the saved file — same flow as download-email-attachment.
+pub fn handleDownloadChatImage(ctx: ToolContext) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide either 'url' or all of chatId+messageId+contentId.") orelse return;
+
+    const path = buildHostedContentPath(ctx, args, "/chats/", "chatId") orelse return;
+    defer ctx.allocator.free(path);
+
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
+        return;
+    };
+    defer ctx.allocator.free(response);
+
+    const name_override = json_rpc.getStringArg(args, "name");
+    const default_name = "chat-image.bin";
+    const name = if (name_override) |n| n else default_name;
+
+    const local_path = binary_download.saveToTempFile(
+        ctx.allocator,
+        ctx.io,
+        name,
+        response,
+    ) catch {
+        ctx.sendResult("Failed to write hosted content to a temp path.");
+        return;
+    };
+    defer ctx.allocator.free(local_path);
+
+    const msg = std.fmt.allocPrint(
+        ctx.allocator,
+        "Downloaded {d} bytes | local_path: {s}",
+        .{ response.len, local_path },
+    ) catch return;
+    defer ctx.allocator.free(msg);
+    ctx.sendResult(msg);
+}
+
+/// Build the hosted-content Graph path from either a `url` arg (parsed)
+/// or the {scope}Id+messageId+contentId triple. `scope_prefix` is
+/// "/chats/" for chat messages or "/teams/{teamId}/channels/{channelId}/"
+/// for channel messages — caller passes the appropriate value.
+///
+/// Returns an allocated path the caller owns, or null on error (with
+/// the error message already sent to the client).
+fn buildHostedContentPath(
+    ctx: ToolContext,
+    args: std.json.ObjectMap,
+    /// "/chats/" for chat messages. Channels use a different path-builder
+    /// because they need teamId+channelId in the prefix; this helper just
+    /// covers the simpler chat case where one identifier (chatId) leads
+    /// the URL.
+    scope_prefix: []const u8,
+    /// "chatId" — the JSON arg name for the leading identifier when url
+    /// isn't passed.
+    leading_id_arg: []const u8,
+) ?[]u8 {
+    if (json_rpc.getStringArg(args, "url")) |url| {
+        return parseHostedContentUrl(ctx.allocator, url) orelse {
+            ctx.sendResult("Could not parse the hostedContents URL. Expected something like https://graph.microsoft.com/v1.0/chats/.../messages/.../hostedContents/.../$value");
+            return null;
+        };
+    }
+
+    const leading_id = json_rpc.getStringArg(args, leading_id_arg) orelse {
+        var buf: [128]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "Missing '{s}' (or pass 'url' instead).", .{leading_id_arg}) catch "Missing identifier.";
+        ctx.sendResult(msg);
+        return null;
+    };
+    const message_id = json_rpc.getStringArg(args, "messageId") orelse {
+        ctx.sendResult("Missing 'messageId' (or pass 'url' instead).");
+        return null;
+    };
+    const content_id = json_rpc.getStringArg(args, "contentId") orelse {
+        ctx.sendResult("Missing 'contentId' (or pass 'url' instead).");
+        return null;
+    };
+
+    return std.fmt.allocPrint(
+        ctx.allocator,
+        "{s}{s}/messages/{s}/hostedContents/{s}/$value",
+        .{ scope_prefix, leading_id, message_id, content_id },
+    ) catch null;
+}
+
+/// Strip the Graph host prefix off a hosted-content URL, leaving the
+/// path Graph helpers expect. We accept these two forms:
+///   https://graph.microsoft.com/v1.0/chats/.../messages/.../hostedContents/.../$value
+///   https://graph.microsoft.com/v1.0/teams/.../channels/.../messages/.../hostedContents/.../$value
+fn parseHostedContentUrl(allocator: Allocator, url: []const u8) ?[]u8 {
+    const v1_marker = "/v1.0";
+    const idx = std.mem.indexOf(u8, url, v1_marker) orelse return null;
+    const after_version = url[idx + v1_marker.len ..];
+    if (after_version.len == 0 or after_version[0] != '/') return null;
+    return allocator.dupe(u8, after_version) catch null;
 }

@@ -280,6 +280,23 @@ const delete_chan_reply_props = [_]PropSpec{
     .{ .name = "replyId", .type = "string", .description = "The ID of the reply to delete" },
 };
 
+const download_chat_image_props = [_]PropSpec{
+    .{ .name = "url", .type = "string", .description = "Optional. The full https://graph.microsoft.com/v1.0/chats/.../hostedContents/.../$value URL pulled from the message body's <img src=...>. Easiest path — pass this and skip the IDs." },
+    .{ .name = "chatId", .type = "string", .description = "Required if 'url' not passed. The chat ID containing the image." },
+    .{ .name = "messageId", .type = "string", .description = "Required if 'url' not passed. The message ID inside the chat." },
+    .{ .name = "contentId", .type = "string", .description = "Required if 'url' not passed. The hosted content ID." },
+    .{ .name = "name", .type = "string", .description = "Optional filename for the saved file (default 'chat-image.bin'). Doesn't change the bytes — just the local_path leaf." },
+};
+
+const download_channel_image_props = [_]PropSpec{
+    .{ .name = "url", .type = "string", .description = "Optional. The full https://graph.microsoft.com/v1.0/teams/.../hostedContents/.../$value URL pulled from the channel message body's <img src=...>." },
+    .{ .name = "teamId", .type = "string", .description = "Required if 'url' not passed." },
+    .{ .name = "channelId", .type = "string", .description = "Required if 'url' not passed." },
+    .{ .name = "messageId", .type = "string", .description = "Required if 'url' not passed. The channel message ID." },
+    .{ .name = "contentId", .type = "string", .description = "Required if 'url' not passed. The hosted content ID." },
+    .{ .name = "name", .type = "string", .description = "Optional filename for the saved file (default 'channel-image.bin')." },
+};
+
 const cal_update_props = [_]PropSpec{
     .{ .name = "eventId", .type = "string", .description = "The ID of the event to update (from list-calendar-events)" },
     .{ .name = "subject", .type = "string", .description = "New event title/subject" },
@@ -704,6 +721,16 @@ const all_tools = [_]ToolSpec{
         .description = "Soft-delete a reply to a message in a Teams channel.",
         .props = &delete_chan_reply_props,
         .required = &.{ "teamId", "channelId", "messageId", "replyId" },
+    },
+    .{
+        .name = "download-chat-image",
+        .description = "Download an inline image (or other hosted content) from a Teams chat message and save it to a local temp file. Use when a chat message body contains an <img src=\"https://graph.microsoft.com/v1.0/chats/.../hostedContents/.../$value\"> tag — pass that URL as `url` and the file lands on disk. Returns 'local_path:' pointing at the saved bytes (binary-safe — never streams bytes through chat).",
+        .props = &download_chat_image_props,
+    },
+    .{
+        .name = "download-channel-image",
+        .description = "Download an inline image from a Teams channel message and save it to a local temp file. Same flow as download-chat-image but scoped to channel messages (the URL pattern is /teams/{teamId}/channels/{channelId}/messages/.../hostedContents/.../$value). Pass `url` for the easy path.",
+        .props = &download_channel_image_props,
     },
     // --- SharePoint ---
     .{
