@@ -33,7 +33,15 @@ To try in-progress features from the `staging` branch:
 curl -fsSL https://raw.githubusercontent.com/currenthandle/ms365-mcp/staging/install-staging.sh | sh
 ```
 
-The staging release is rebuilt automatically on every push to the `staging` branch by [`.github/workflows/staging.yml`](.github/workflows/staging.yml). It's a moving target — may break, may include features that haven't shipped to `main` yet.
+That installs the latest release candidate. To pin to a specific rc tag (useful for reproducing a tester's environment):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/currenthandle/ms365-mcp/staging/install-staging.sh | sh -s -- --tag v0.1.0-rc.3
+```
+
+Every push to `staging` is auto-tagged `vX.Y.Z-rc.N` by [`.github/workflows/tag-staging.yml`](.github/workflows/tag-staging.yml), which triggers the [`release.yml`](.github/workflows/release.yml) workflow to publish a pre-release. After installing, run `ms365-mcp --version` to confirm which build you're on.
+
+Staging is a moving target — may break, may include features that haven't shipped to `main` yet.
 
 ## Setup
 
