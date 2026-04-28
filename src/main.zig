@@ -37,8 +37,10 @@ const calendar_tools = @import("tools/calendar.zig");
 const chat_tools = @import("tools/chat.zig");
 const channel_tools = @import("tools/channels.zig");
 const sharepoint_tools = @import("tools/sharepoint.zig");
+const onedrive_tools = @import("tools/onedrive.zig");
 const user_tools = @import("tools/users.zig");
 const ToolContext = @import("tools/context.zig").ToolContext;
+const version = @import("version");
 
 // Type aliases — keeps function signatures cleaner.
 const Allocator = std.mem.Allocator;
@@ -63,6 +65,17 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "read-email", email_tools.handleReadEmail },
     .{ "send-email", email_tools.handleSendEmail },
     .{ "delete-email", email_tools.handleDeleteEmail },
+    .{ "batch-delete-emails", email_tools.handleBatchDeleteEmails },
+    .{ "reply-email", email_tools.handleReplyEmail },
+    .{ "reply-all-email", email_tools.handleReplyAllEmail },
+    .{ "forward-email", email_tools.handleForwardEmail },
+    .{ "search-emails", email_tools.handleSearchEmails },
+    .{ "list-mail-folders", email_tools.handleListMailFolders },
+    .{ "mark-read-email", email_tools.handleMarkReadEmail },
+    .{ "move-email", email_tools.handleMoveEmail },
+    .{ "list-email-attachments", email_tools.handleListEmailAttachments },
+    .{ "read-email-attachment", email_tools.handleReadEmailAttachment },
+    .{ "download-email-attachment", email_tools.handleDownloadEmailAttachment },
     // --- Drafts ---
     .{ "create-draft", draft_tools.handleCreateDraft },
     .{ "send-draft", draft_tools.handleSendDraft },
@@ -73,43 +86,87 @@ const tool_handlers = std.StaticStringMap(Handler).initComptime(.{
     .{ "remove-attachment", draft_tools.handleRemoveAttachment },
     // --- Chat ---
     .{ "list-chats", chat_tools.handleListChats },
+    .{ "search-chats", chat_tools.handleSearchChats },
     .{ "list-chat-messages", chat_tools.handleListChatMessages },
     .{ "send-chat-message", chat_tools.handleSendChatMessage },
     .{ "create-chat", chat_tools.handleCreateChat },
+    .{ "search-chat-messages", chat_tools.handleSearchChatMessages },
     .{ "delete-chat-message", chat_tools.handleDeleteChatMessage },
+    .{ "download-chat-image", chat_tools.handleDownloadChatImage },
     // --- Calendar ---
     .{ "get-calendar-event", calendar_tools.handleGetCalendarEvent },
     .{ "list-calendar-events", calendar_tools.handleListCalendarEvents },
     .{ "create-calendar-event", calendar_tools.handleCreateCalendarEvent },
     .{ "update-calendar-event", calendar_tools.handleUpdateCalendarEvent },
     .{ "delete-calendar-event", calendar_tools.handleDeleteCalendarEvent },
+    .{ "find-meeting-times", calendar_tools.handleFindMeetingTimes },
+    .{ "get-schedule", calendar_tools.handleGetSchedule },
+    .{ "respond-to-event", calendar_tools.handleRespondToEvent },
     // --- Teams channels ---
     .{ "list-teams", channel_tools.handleListTeams },
     .{ "list-channels", channel_tools.handleListChannels },
+    .{ "search-channels", channel_tools.handleSearchChannels },
     .{ "list-channel-messages", channel_tools.handleListChannelMessages },
     .{ "get-channel-message-replies", channel_tools.handleGetChannelMessageReplies },
     .{ "post-channel-message", channel_tools.handlePostChannelMessage },
     .{ "reply-to-channel-message", channel_tools.handleReplyToChannelMessage },
     .{ "delete-channel-message", channel_tools.handleDeleteChannelMessage },
     .{ "delete-channel-reply", channel_tools.handleDeleteChannelReply },
+    .{ "download-channel-image", channel_tools.handleDownloadChannelImage },
     // --- SharePoint ---
     .{ "search-sharepoint-sites", sharepoint_tools.handleSearchSites },
     .{ "list-sharepoint-drives", sharepoint_tools.handleListDrives },
     .{ "list-sharepoint-items", sharepoint_tools.handleListItems },
+    .{ "search-sharepoint-files", sharepoint_tools.handleSearchFiles },
     .{ "upload-sharepoint-file", sharepoint_tools.handleUploadFile },
     .{ "upload-sharepoint-content", sharepoint_tools.handleUploadContent },
     .{ "create-sharepoint-folder", sharepoint_tools.handleCreateFolder },
     .{ "delete-sharepoint-item", sharepoint_tools.handleDeleteItem },
     .{ "download-sharepoint-file", sharepoint_tools.handleDownloadFile },
+    // --- OneDrive (personal) ---
+    .{ "list-onedrive-items", onedrive_tools.handleListItems },
+    .{ "search-onedrive-files", sharepoint_tools.handleSearchOneDriveFiles },
+    .{ "upload-onedrive-file", onedrive_tools.handleUploadFile },
+    .{ "upload-onedrive-content", onedrive_tools.handleUploadContent },
+    .{ "download-onedrive-file", onedrive_tools.handleDownloadFile },
+    .{ "delete-onedrive-item", onedrive_tools.handleDeleteItem },
     // --- Utility ---
     .{ "search-users", user_tools.handleSearchUsers },
     .{ "get-profile", user_tools.handleGetProfile },
 });
 
-pub fn main() !void {
+pub fn main(init: std.process.Init.Minimal) !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
+
+    // CLI flag: `ms365-mcp --version` (or `-v`) prints the build-time
+    // version string and exits. Useful for testers debugging "which
+    // binary is this?" without spinning up the MCP protocol. Comes
+    // first so it works even before MS365_CLIENT_ID / MS365_TENANT_ID
+    // are set — those are MCP-server requirements, not version-print
+    // requirements.
+    {
+        var args_iter = init.args.iterateAllocator(allocator) catch return error.ArgsFailed;
+        defer args_iter.deinit();
+        // First arg is the program path; skip it.
+        _ = args_iter.next();
+        if (args_iter.next()) |arg| {
+            if (std.mem.eql(u8, arg, "--version") or std.mem.eql(u8, arg, "-v")) {
+                // Write directly to libc's stdout fd so the output is
+                // pipeable. std.debug.print goes to stderr, which would
+                // break shell idioms like `if [ "$(ms365-mcp --version)" = "v0.2.0" ]`.
+                // We're already linked against libc; use write(2) directly
+                // rather than spinning up an Io context just for one print.
+                const c_write = struct {
+                    extern "c" fn write(fd: c_int, buf: [*]const u8, count: usize) isize;
+                }.write;
+                _ = c_write(1, version.VERSION.ptr, version.VERSION.len);
+                _ = c_write(1, "\n", 1);
+                return;
+            }
+        }
+    }
 
     std.debug.print("ms-mcp: server starting\n", .{});
 

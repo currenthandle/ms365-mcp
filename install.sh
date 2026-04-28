@@ -41,8 +41,19 @@ echo "Installing ms365-mcp ${LATEST} (${OS} ${ARCH})..."
 # Download the binary.
 URL="https://github.com/${REPO}/releases/download/${LATEST}/${BINARY}"
 mkdir -p "${INSTALL_DIR}"
+
+# Remove any prior install before downloading. Forces a fresh inode so
+# any MCP client / shell / signature cache pointing at the old file
+# resolves cleanly to the new one on next spawn.
+rm -f "${INSTALL_DIR}/ms365-mcp"
+
 curl -fsSL "${URL}" -o "${INSTALL_DIR}/ms365-mcp"
 chmod +x "${INSTALL_DIR}/ms365-mcp"
+
+# Defensive: clear macOS quarantine xattr if anything set one along the
+# way. curl doesn't set it, but this is cheap insurance against the
+# occasional "binary won't run" mystery that costs testers 10 minutes.
+xattr -d com.apple.quarantine "${INSTALL_DIR}/ms365-mcp" 2>/dev/null || true
 
 echo "Installed to ${INSTALL_DIR}/ms365-mcp"
 

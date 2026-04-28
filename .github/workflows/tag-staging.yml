@@ -1,0 +1,55 @@
+name: Tag staging
+
+# Auto-tag every push to the staging branch as the next release-candidate
+# of the version declared in VERSION. Pushing the tag triggers
+# release.yml, which builds the binaries and publishes a pre-release.
+# This is the only workflow that runs on a staging push — the build
+# itself comes from release.yml so we never build the same commit twice.
+
+on:
+  push:
+    branches:
+      - staging
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need the full tag history to find the highest existing rc.
+          fetch-depth: 0
+
+      - name: Compute next rc tag
+        id: nexttag
+        run: |
+          set -e
+          base="$(cat VERSION | tr -d '[:space:]')"
+          # Find the highest existing rc number for this base, e.g. for
+          # base=v0.1.0 look at v0.1.0-rc.1, v0.1.0-rc.2, ... and bump.
+          highest=$(git tag --list "${base}-rc.*" \
+            | sed -E "s/^${base}-rc\.//" \
+            | grep -E '^[0-9]+$' \
+            | sort -n \
+            | tail -1)
+          if [ -z "${highest}" ]; then
+            next=1
+          else
+            next=$((highest + 1))
+          fi
+          tag="${base}-rc.${next}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Next staging tag: ${tag}"
+
+      - name: Create and push tag
+        env:
+          TAG: ${{ steps.nexttag.outputs.tag }}
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "${TAG} — auto-tagged staging build"
+          git push origin "${TAG}"

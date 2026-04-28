@@ -17,7 +17,26 @@ const graph = @import("../graph.zig");
 const url_util = @import("../url.zig");
 const json_rpc = @import("../json_rpc.zig");
 const mime = @import("../mime.zig");
+const json_util = @import("../json_util.zig");
+const formatter = @import("../formatter.zig");
+const binary_download = @import("../binary_download.zig");
 const ToolContext = @import("context.zig").ToolContext;
+
+const sp_site_fields = [_]formatter.FieldSpec{
+    .{ .path = "displayName", .label = "name" },
+    .{ .path = "name", .label = "urlName" },
+};
+
+const sp_drive_fields = [_]formatter.FieldSpec{
+    .{ .path = "name", .label = "name" },
+    .{ .path = "driveType", .label = "type" },
+};
+
+const sp_item_fields = [_]formatter.FieldSpec{
+    .{ .path = "name", .label = "name" },
+    .{ .path = "size", .label = "size" }, // number — skipped by formatter (only strings resolve), keeping for future
+    .{ .path = "lastModifiedDateTime", .label = "modified" },
+};
 
 const Value = std.json.Value;
 const ObjectMap = std.json.ObjectMap;
@@ -78,13 +97,18 @@ pub fn handleSearchSites(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/sites?search={s}&$select=id,name,displayName,webUrl", .{encoded_query}) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to search SharePoint sites.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &sp_site_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No SharePoint sites matched that query.");
+    }
 }
 
 /// List document libraries (drives) in a SharePoint site.
@@ -96,13 +120,18 @@ pub fn handleListDrives(ctx: ToolContext) void {
     const path = std.fmt.allocPrint(ctx.allocator, "/sites/{s}/drives?$select=id,name,webUrl,driveType", .{site_id}) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to list SharePoint drives.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &sp_drive_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("No drives in this site.");
+    }
 }
 
 /// List items (files + folders) at a path inside a drive.
@@ -124,13 +153,18 @@ pub fn handleListItems(ctx: ToolContext) void {
     } else std.fmt.allocPrint(ctx.allocator, "/sites/{s}/drives/{s}/root/children", .{ site_id, drive_id }) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, path) catch {
-        ctx.sendResult("Failed to list SharePoint items.");
+    const response = graph.get(ctx.allocator, ctx.io, token, path) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    if (formatter.summarizeArray(ctx.allocator, response, &sp_item_fields)) |summary| {
+        defer ctx.allocator.free(summary);
+        ctx.sendResult(summary);
+    } else {
+        ctx.sendResult("Folder is empty.");
+    }
 }
 
 // --- Upload tools ---
@@ -223,8 +257,8 @@ fn uploadSimple(
     const path = std.fmt.allocPrint(ctx.allocator, "/sites/{s}/drives/{s}/root:/{s}:/content", .{ site_id, drive_id, escaped }) catch return;
     defer ctx.allocator.free(path);
 
-    const response = graph.put(ctx.allocator, ctx.io, token, path, data, content_type) catch {
-        ctx.sendResult("Failed to upload file to SharePoint.");
+    const response = graph.put(ctx.allocator, ctx.io, token, path, data, content_type) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -260,13 +294,13 @@ fn uploadChunked(
         \\{"item":{"@microsoft.graph.conflictBehavior":"replace"}}
     ;
 
-    const session_resp = graph.post(ctx.allocator, ctx.io, token, session_path, session_body) catch {
-        ctx.sendResult("Failed to create SharePoint upload session.");
+    const session_resp = graph.post(ctx.allocator, ctx.io, token, session_path, session_body) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(session_resp);
 
-    const upload_url = extractStringField(ctx.allocator, session_resp, "uploadUrl") orelse {
+    const upload_url = json_util.extractString(ctx.allocator, session_resp, "uploadUrl") orelse {
         const err_msg = std.fmt.allocPrint(ctx.allocator, "Upload session response missing uploadUrl: {s}", .{session_resp}) catch return;
         defer ctx.allocator.free(err_msg);
         ctx.sendResult(err_msg);
@@ -293,8 +327,8 @@ fn uploadChunked(
         ) catch return;
         defer ctx.allocator.free(range);
 
-        const chunk_resp = graph.putChunk(ctx.allocator, ctx.io, upload_url, chunk, range) catch {
-            ctx.sendResult("Failed to upload chunk to SharePoint.");
+        const chunk_resp = graph.putChunk(ctx.allocator, ctx.io, upload_url, chunk, range) catch |err| {
+            ctx.sendGraphError(err);
             return;
         };
         // Replace last_response each iteration — only the final chunk's
@@ -356,8 +390,8 @@ pub fn handleCreateFolder(ctx: ToolContext) void {
     defer json_buf.deinit();
     std.json.Stringify.value(Value{ .object = body }, .{}, &json_buf.writer) catch return;
 
-    const response = graph.post(ctx.allocator, ctx.io, token, endpoint, json_buf.written()) catch {
-        ctx.sendResult("Failed to create SharePoint folder.");
+    const response = graph.post(ctx.allocator, ctx.io, token, endpoint, json_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
@@ -399,8 +433,8 @@ pub fn handleDeleteItem(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(endpoint);
 
-    graph.delete(ctx.allocator, ctx.io, token, endpoint) catch {
-        ctx.sendResult("Failed to delete SharePoint item.");
+    graph.delete(ctx.allocator, ctx.io, token, endpoint) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
 
@@ -442,29 +476,168 @@ pub fn handleDownloadFile(ctx: ToolContext) void {
     };
     defer ctx.allocator.free(endpoint);
 
-    const response = graph.get(ctx.allocator, ctx.io, token, endpoint) catch {
-        ctx.sendResult("Failed to download SharePoint file.");
+    const response = graph.get(ctx.allocator, ctx.io, token, endpoint) catch |err| {
+        ctx.sendGraphError(err);
         return;
     };
     defer ctx.allocator.free(response);
 
-    ctx.sendResult(response);
+    // Derive a suggested filename from the last segment of the SharePoint
+    // path. For itemId lookups we don't know the name up-front; fall back
+    // to the generic sanitizeName default by passing an empty string.
+    const suggested_name = if (sp_path) |p| blk: {
+        if (std.mem.lastIndexOfScalar(u8, p, '/')) |i| break :blk p[i + 1 ..];
+        break :blk p;
+    } else "";
+
+    const local_path = binary_download.saveToTempFile(
+        ctx.allocator,
+        ctx.io,
+        suggested_name,
+        response,
+    ) catch {
+        ctx.sendResult("Failed to write downloaded file to a temp path.");
+        return;
+    };
+    defer ctx.allocator.free(local_path);
+
+    // Pipe-delimited key:value format: easy for the LLM to parse; easy
+    // for a human to read in the chat UI.
+    const msg = std.fmt.allocPrint(
+        ctx.allocator,
+        "Downloaded {d} bytes | local_path: {s}",
+        .{ response.len, local_path },
+    ) catch return;
+    defer ctx.allocator.free(msg);
+    ctx.sendResult(msg);
 }
 
-/// Extract a top-level string field from a JSON response body.
-/// Returns a newly-allocated copy (or null on any parse / shape failure) —
-/// caller owns the result.
-fn extractStringField(allocator: std.mem.Allocator, json_text: []const u8, key: []const u8) ?[]u8 {
-    const parsed = std.json.parseFromSlice(Value, allocator, json_text, .{}) catch return null;
-    defer parsed.deinit();
-    const obj = switch (parsed.value) {
-        .object => |o| o,
-        else => return null,
-    };
-    const val = obj.get(key) orelse return null;
-    const s = switch (val) {
-        .string => |str| str,
-        else => return null,
-    };
-    return allocator.dupe(u8, s) catch null;
+/// Search for files across all SharePoint drives the user can access.
+///
+/// Uses POST /search/query with entityTypes=["driveItem"]. Microsoft's
+/// search index covers SharePoint document libraries the user has access
+/// to and returns matches by name + content. Use this when the agent
+/// knows a filename fragment but not the site or folder path.
+///
+/// Returns one row per match with name, parent path (so an agent can
+/// reconstruct the site/folder context), webUrl, and ids.
+pub fn handleSearchFiles(ctx: ToolContext) void {
+    searchDriveItems(ctx, "sharepoint");
 }
+
+/// Search for files in the user's personal OneDrive (/me/drive).
+///
+/// Same Microsoft Search index as search-sharepoint-files but constrained
+/// to the user's personal drive. Use this when an agent needs to find a
+/// file in OneDrive without knowing its folder path.
+pub fn handleSearchOneDriveFiles(ctx: ToolContext) void {
+    searchDriveItems(ctx, "onedrive");
+}
+
+/// Shared body of search-sharepoint-files / search-onedrive-files.
+/// `scope` is "sharepoint" or "onedrive" — both call /search/query with
+/// entityTypes=["driveItem"]; we filter the results client-side based on
+/// whether the parent path looks like a personal drive or a SharePoint
+/// site, since Graph's search filters can't easily distinguish them.
+fn searchDriveItems(ctx: ToolContext, scope: []const u8) void {
+    const token = ctx.requireAuth() orelse return;
+    const args = ctx.getArgs("Missing arguments. Provide query.") orelse return;
+    const query = ctx.getStringArg(args, "query", "Missing 'query' argument.") orelse return;
+
+    const size = json_rpc.getStringArg(args, "size") orelse "25";
+    const from = json_rpc.getStringArg(args, "from") orelse "0";
+
+    var body_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
+    defer body_buf.deinit();
+    const bw = &body_buf.writer;
+    bw.writeAll("{\"requests\":[{\"entityTypes\":[\"driveItem\"],\"query\":{\"queryString\":") catch return;
+    std.json.Stringify.encodeJsonString(query, .{}, bw) catch return;
+    bw.print("}},\"from\":{s},\"size\":{s}}}]}}", .{ from, size }) catch return;
+
+    const response = graph.post(ctx.allocator, ctx.io, token, "/search/query", body_buf.written()) catch |err| {
+        ctx.sendGraphError(err);
+        return;
+    };
+    defer ctx.allocator.free(response);
+
+    const summary = summarizeDriveItemSearch(ctx.allocator, response, scope) catch {
+        ctx.sendResult(response);
+        return;
+    };
+    defer ctx.allocator.free(summary);
+    const empty_msg = if (std.mem.eql(u8, scope, "onedrive"))
+        "No OneDrive files matched that query."
+    else
+        "No SharePoint files matched that query.";
+    ctx.sendResult(if (summary.len > 0) summary else empty_msg);
+}
+
+/// Parse /search/query's nested response for driveItem hits and produce
+/// a condensed summary. Filters by `scope` — onedrive matches are paths
+/// under "/personal/", sharepoint matches are under "/sites/".
+fn summarizeDriveItemSearch(allocator: std.mem.Allocator, response: []const u8, scope: []const u8) ![]u8 {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, response, .{}) catch return error.ParseFailed;
+    defer parsed.deinit();
+
+    const root = switch (parsed.value) { .object => |o| o, else => return error.ParseFailed };
+    const value_arr = switch (root.get("value") orelse return error.ParseFailed) { .array => |a| a, else => return error.ParseFailed };
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    errdefer out.deinit();
+    const w = &out.writer;
+
+    const want_onedrive = std.mem.eql(u8, scope, "onedrive");
+
+    for (value_arr.items) |resp_val| {
+        const resp = switch (resp_val) { .object => |o| o, else => continue };
+        const containers = switch (resp.get("hitsContainers") orelse continue) { .array => |a| a, else => continue };
+        for (containers.items) |container_val| {
+            const container = switch (container_val) { .object => |o| o, else => continue };
+            const hits = switch (container.get("hits") orelse continue) { .array => |a| a, else => continue };
+            for (hits.items) |hit_val| {
+                const hit = switch (hit_val) { .object => |o| o, else => continue };
+                const resource = switch (hit.get("resource") orelse continue) { .object => |o| o, else => continue };
+
+                const name = switch (resource.get("name") orelse .null) { .string => |s| s, else => "(unnamed)" };
+                const id = switch (resource.get("id") orelse .null) { .string => |s| s, else => "" };
+                const web_url = switch (resource.get("webUrl") orelse .null) { .string => |s| s, else => "" };
+
+                // Parent reference tells us which drive + folder this lives in.
+                var parent_path: []const u8 = "";
+                var drive_id: []const u8 = "";
+                if (resource.get("parentReference")) |p_val| {
+                    if (switch (p_val) { .object => |o| o, else => null }) |p_obj| {
+                        if (p_obj.get("path")) |pp| {
+                            if (switch (pp) { .string => |s| s, else => null }) |s| parent_path = s;
+                        }
+                        if (p_obj.get("driveId")) |dd| {
+                            if (switch (dd) { .string => |s| s, else => null }) |s| drive_id = s;
+                        }
+                    }
+                }
+
+                // Scope filter: OneDrive items have parent paths like
+                // "/drives/<id>/root:/..." with the drive being the user's
+                // personal drive; SharePoint items have webUrl that contains
+                // "/sites/" or parent paths under a site. We use webUrl as
+                // the most reliable signal — OneDrive personal URLs contain
+                // "-my.sharepoint.com" or "/personal/", SharePoint URLs
+                // contain "/sites/".
+                const is_onedrive = std.mem.indexOf(u8, web_url, "/personal/") != null or
+                    std.mem.indexOf(u8, web_url, "-my.sharepoint.com") != null;
+                if (want_onedrive and !is_onedrive) continue;
+                if (!want_onedrive and is_onedrive) continue;
+
+                w.print("name: {s}", .{name}) catch continue;
+                if (parent_path.len > 0) w.print(" | path: {s}", .{parent_path}) catch {};
+                if (drive_id.len > 0) w.print(" | driveId: {s}", .{drive_id}) catch {};
+                if (id.len > 0) w.print(" | itemId: {s}", .{id}) catch {};
+                if (web_url.len > 0) w.print(" | webUrl: {s}", .{web_url}) catch {};
+                w.writeAll("\n") catch continue;
+            }
+        }
+    }
+
+    return out.toOwnedSlice();
+}
+

@@ -39,6 +39,49 @@ fn shouldRun(category: []const u8) bool {
     return false;
 }
 
+/// Every env var the suite needs to run a real journey against live Graph.
+/// Missing any of these used to produce silent skips; now the run aborts
+/// with a clear list so tests can't pass by not running.
+const required_env = [_][]const u8{
+    "E2E_TEST_EMAIL",
+    "E2E_ATTENDEE_REQUIRED",
+    "E2E_ATTENDEE_OPTIONAL",
+    "E2E_SHAREPOINT_SITE_NAME",
+};
+
+/// Verify all required env vars are set. Prints a list of any missing ones
+/// and returns false so the run can abort cleanly.
+fn checkRequiredEnv() bool {
+    var missing = false;
+    for (required_env) |name| {
+        const name_z = std.heap.page_allocator.dupeZ(u8, name) catch continue;
+        defer std.heap.page_allocator.free(name_z);
+        if (std.c.getenv(name_z.ptr) == null) {
+            if (!missing) {
+                std.debug.print("\n\x1b[31mMissing required env vars:\x1b[0m\n", .{});
+                missing = true;
+            }
+            std.debug.print("  - {s}\n", .{name});
+        }
+    }
+    if (missing) {
+        std.debug.print("\nAdd them to .env and re-run.\n\n", .{});
+        return false;
+    }
+    return true;
+}
+
+/// Call after a test category to confirm the server is still responsive.
+/// If a previous test crashed or hung the process, stop the run immediately
+/// rather than watch every remaining test fail with cascading errors.
+fn assertAlive(client: *client_mod.McpClient, label: []const u8) void {
+    if (!client.isAlive()) {
+        std.debug.print("\n\x1b[31m✗ Server unresponsive after {s} — aborting run.\x1b[0m\n", .{label});
+        std.debug.print("  The most recent tool call likely crashed or hung the MCP server.\n", .{});
+        std.process.exit(1);
+    }
+}
+
 pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
@@ -50,6 +93,10 @@ pub fn main() !void {
 
     // Load .env file (won't overwrite existing env vars).
     env.loadDotEnv(allocator, io);
+
+    // All test recipients / sites must be configured up front. A missing
+    // var used to silently skip the relevant journey; now it aborts.
+    if (!checkRequiredEnv()) return;
 
     // Load env vars from .mcp.json to pass to the child server process.
     var env_map = env.loadMcpConfig(allocator, io) catch {
@@ -117,17 +164,52 @@ pub fn main() !void {
     if (shouldRun("email")) {
         std.debug.print("\n\x1b[1mLifecycle — Email:\x1b[0m\n", .{});
         try cases.testSendEmailLifecycle(&client);
+        try cases.testEmailReplyLifecycle(&client);
+        try cases.testEmailForwardLifecycle(&client);
+        try cases.testEmailSearch(&client);
+        try cases.testEmailSearchSizeParam(&client);
+        try cases.testListEmailsTopParam(&client);
+        try cases.testListEmailsNextLink(&client);
+        try cases.testListMailFolders(&client);
+        try cases.testMarkReadLifecycle(&client);
+        try cases.testMoveEmailLifecycle(&client);
+        try cases.testEmailAttachmentDownload(&client);
+    }
+
+    if (shouldRun("calendar-schedule")) {
+        std.debug.print("\n\x1b[1mLifecycle — Calendar Scheduling:\x1b[0m\n", .{});
+        try cases.testGetSchedule(&client);
+        try cases.testFindMeetingTimes(&client);
+        try cases.testRespondToEvent(&client);
+    }
+
+    if (shouldRun("onedrive")) {
+        std.debug.print("\n\x1b[1mLifecycle — OneDrive:\x1b[0m\n", .{});
+        try cases.testOneDriveLifecycle(&client);
     }
 
     if (shouldRun("chat")) {
         std.debug.print("\n\x1b[1mLifecycle — Chat:\x1b[0m\n", .{});
         try cases.testChatMessageLifecycle(&client);
+        try cases.testSearchChats(&client);
+        assertAlive(&client, "chat lifecycle");
+    }
+
+    if (shouldRun("journeys")) {
+        std.debug.print("\n\x1b[1mCross-tool journeys:\x1b[0m\n", .{});
+        try cases.testChatJourneySearchAndSend(&client);
+        try cases.testBatchDeleteEmails(&client);
+        try cases.testDiscoveryJourneyChannelByName(&client);
+        assertAlive(&client, "journeys");
     }
 
     if (shouldRun("channels")) {
         std.debug.print("\n\x1b[1mLifecycle — Channels:\x1b[0m\n", .{});
         try cases.testChannelLifecycle(&client);
         try cases.testReplyToChannelMessage(&client);
+        try cases.testSearchChannels(&client);
+        try cases.testListChannelsQueryFilter(&client);
+        assertAlive(&client, "channels lifecycle");
     }
 
     if (shouldRun("sharepoint")) {
@@ -137,6 +219,8 @@ pub fn main() !void {
         try cases.testSharePointLargeUpload(&client);
         try cases.testSharePointItemIdTargeting(&client);
         try cases.testSharePointPathValidation(&client);
+        try cases.testSearchSharepointFiles(&client);
+        try cases.testSearchOnedriveFiles(&client);
     }
 
     // --- Summary ---

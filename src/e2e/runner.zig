@@ -18,3 +18,12 @@ pub fn fail(name: []const u8, reason: []const u8) void {
     tests_failed += 1;
     std.debug.print("  \x1b[31m✗\x1b[0m {s}: {s}\n", .{ name, reason });
 }
+
+/// A skip is a failure. A test that can't run against live Graph because
+/// a prerequisite is missing or a setup step failed is not a passing test
+/// — it's a test that didn't verify anything. Count it as a failure so it
+/// fails CI, and print it red so it's unmistakable.
+pub fn skip(name: []const u8, reason: []const u8) void {
+    tests_failed += 1;
+    std.debug.print("  \x1b[31m⊘ SKIPPED\x1b[0m {s}: {s}\n", .{ name, reason });
+}

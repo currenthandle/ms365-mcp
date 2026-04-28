@@ -1,12 +1,59 @@
 // graph.zig — Microsoft Graph API client.
+//
+// Every public function here returns either an allocated response body
+// (`![]u8`) or a typed error from graph_errors.GraphError. Handlers
+// should catch via `ctx.sendGraphError(err)` to get a user-facing message.
 
 const std = @import("std");
+const graph_errors = @import("graph_errors.zig");
+
+pub const GraphError = graph_errors.GraphError;
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 /// Base URL for all Microsoft Graph API v1.0 endpoints.
 const base_url = "https://graph.microsoft.com/v1.0";
+
+/// Map an HTTP status code from Graph into either success (return body) or
+/// a typed error. On error paths the body is freed — callers don't need it
+/// beyond the short snippet explain() embeds in its message.
+///
+/// Takes ownership of `body`: returns it on success, frees it on error.
+fn mapStatus(
+    allocator: Allocator,
+    status: std.http.Status,
+    body: []u8,
+) GraphError![]u8 {
+    const code: u16 = @intFromEnum(status);
+    // 2xx — success. 202 is "continue" from an upload-session chunk;
+    // both it and 200/201 carry a usable body.
+    if (code >= 200 and code < 300) return body;
+
+    // Anything else is an error — the body is no longer useful to the
+    // caller as a success payload.
+    defer allocator.free(body);
+    return switch (code) {
+        400 => GraphError.BadRequest,
+        401 => GraphError.Unauthorized,
+        403 => blk: {
+            // 403 has two flavors. "insufficient_scope" or
+            // "InvalidAuthenticationToken" in the body means the app is
+            // missing a scope; anything else is a generic forbidden.
+            const scope_marker = std.mem.indexOf(u8, body, "insufficient_scope") != null or
+                std.mem.indexOf(u8, body, "InvalidAuthenticationToken") != null;
+            break :blk if (scope_marker) GraphError.InsufficientScope else GraphError.Forbidden;
+        },
+        404 => GraphError.NotFound,
+        409 => GraphError.Conflict,
+        429 => GraphError.Throttled,
+        500...599 => GraphError.ServerError,
+        // Any other status we don't specifically recognize gets bucketed
+        // as BadRequest — the Graph server said no and didn't use one of
+        // the canonical codes above.
+        else => GraphError.BadRequest,
+    };
+}
 
 /// Make an authenticated GET request to the Graph API.
 ///
@@ -63,7 +110,7 @@ pub fn getWithPrefer(allocator: Allocator, io: Io, access_token: []const u8, pat
     defer client.deinit();
 
     var response_buf: std.Io.Writer.Allocating = .init(allocator);
-    defer response_buf.deinit();
+    errdefer response_buf.deinit();
 
     // Debug: log the request.
     std.debug.print("ms-mcp: {s} {s}\n", .{ "GET", url });
@@ -74,14 +121,72 @@ pub fn getWithPrefer(allocator: Allocator, io: Io, access_token: []const u8, pat
         .{ .name = "Prefer", .value = prefer },
     };
 
-    _ = try client.fetch(.{
+    const fetched = client.fetch(.{
         .location = .{ .url = url },
         .method = .GET,
         .extra_headers = headers,
         .response_writer = &response_buf.writer,
-    });
+    }) catch {
+        response_buf.deinit();
+        return GraphError.NetworkError;
+    };
 
-    return response_buf.toOwnedSlice();
+    const body = try response_buf.toOwnedSlice();
+    return mapStatus(allocator, fetched.status, body);
+}
+
+/// Make an authenticated GET request with caller-supplied extra headers.
+///
+/// This generalizes getWithPrefer for endpoints that need something other
+/// than a Prefer header — for example, /me/messages?$search=... requires
+/// `ConsistencyLevel: eventual` or the query fails silently on some fields.
+///
+/// `extra` is a list of Header structs appended to the Authorization header.
+/// The caller owns any allocated header values (name/value slices are just
+/// borrowed for the duration of the call).
+///
+/// Returns the response body as an allocated slice — caller must free it.
+pub fn getWithHeaders(
+    allocator: Allocator,
+    io: Io,
+    access_token: []const u8,
+    path: []const u8,
+    extra: []const std.http.Header,
+) ![]u8 {
+    const url = try std.fmt.allocPrint(allocator, "{s}{s}", .{ base_url, path });
+    defer allocator.free(url);
+
+    const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{access_token});
+    defer allocator.free(auth_header);
+
+    var client: std.http.Client = .{ .allocator = allocator, .io = io };
+    defer client.deinit();
+
+    var response_buf: std.Io.Writer.Allocating = .init(allocator);
+    errdefer response_buf.deinit();
+
+    std.debug.print("ms-mcp: GET {s}\n", .{url});
+
+    // Build a heap-allocated combined header list: Authorization + caller's extras.
+    // std.mem.concat is the Zig equivalent of Python's list +.
+    const headers = try std.mem.concat(allocator, std.http.Header, &.{
+        &[_]std.http.Header{.{ .name = "Authorization", .value = auth_header }},
+        extra,
+    });
+    defer allocator.free(headers);
+
+    const fetched = client.fetch(.{
+        .location = .{ .url = url },
+        .method = .GET,
+        .extra_headers = headers,
+        .response_writer = &response_buf.writer,
+    }) catch {
+        response_buf.deinit();
+        return GraphError.NetworkError;
+    };
+
+    const body = try response_buf.toOwnedSlice();
+    return mapStatus(allocator, fetched.status, body);
 }
 
 /// Make an authenticated PUT request to the Graph API with a raw body.
@@ -113,22 +218,26 @@ pub fn put(
     defer client.deinit();
 
     var response_buf: std.Io.Writer.Allocating = .init(allocator);
-    defer response_buf.deinit();
+    errdefer response_buf.deinit();
 
     const headers = &[_]std.http.Header{
         .{ .name = "Authorization", .value = auth_header },
         .{ .name = "Content-Type", .value = content_type },
     };
 
-    _ = try client.fetch(.{
+    const fetched = client.fetch(.{
         .location = .{ .url = url },
         .method = .PUT,
         .payload = body,
         .extra_headers = headers,
         .response_writer = &response_buf.writer,
-    });
+    }) catch {
+        response_buf.deinit();
+        return GraphError.NetworkError;
+    };
 
-    return response_buf.toOwnedSlice();
+    const out = try response_buf.toOwnedSlice();
+    return mapStatus(allocator, fetched.status, out);
 }
 
 /// PUT one chunk of a large-file upload to a pre-authed upload session URL.
@@ -157,22 +266,27 @@ pub fn putChunk(
     defer client.deinit();
 
     var response_buf: std.Io.Writer.Allocating = .init(allocator);
-    defer response_buf.deinit();
+    errdefer response_buf.deinit();
 
     // No Authorization header — upload_url is pre-signed.
     const headers = &[_]std.http.Header{
         .{ .name = "Content-Range", .value = content_range },
     };
 
-    _ = try client.fetch(.{
+    const fetched = client.fetch(.{
         .location = .{ .url = upload_url },
         .method = .PUT,
         .payload = chunk,
         .extra_headers = headers,
         .response_writer = &response_buf.writer,
-    });
+    }) catch {
+        response_buf.deinit();
+        return GraphError.NetworkError;
+    };
 
-    return response_buf.toOwnedSlice();
+    const body = try response_buf.toOwnedSlice();
+    // 202 = "send next chunk", which mapStatus treats as success (2xx).
+    return mapStatus(allocator, fetched.status, body);
 }
 
 /// Make an authenticated PATCH request to the Graph API with a JSON body.
@@ -206,18 +320,83 @@ pub fn delete(allocator: Allocator, io: Io, access_token: []const u8, path: []co
     // keep_alive=false sends "Connection: close" so the server closes the
     // connection after the 204 response. Without this, discardRemaining()
     // blocks waiting for data that will never come on the keep-alive connection.
-    _ = try client.fetch(.{
+    //
+    // DELETE returns 204 No Content on success with no body — we still
+    // need to inspect the status so 4xx/5xx map into GraphError.
+    const fetched = client.fetch(.{
         .location = .{ .url = url },
         .method = .DELETE,
         .keep_alive = false,
         .extra_headers = &[_]std.http.Header{
             .{ .name = "Authorization", .value = auth_header },
         },
-    });
+    }) catch return GraphError.NetworkError;
+
+    const code: u16 = @intFromEnum(fetched.status);
+    if (code >= 200 and code < 300) return;
+    return switch (code) {
+        400 => GraphError.BadRequest,
+        401 => GraphError.Unauthorized,
+        403 => GraphError.Forbidden,
+        404 => GraphError.NotFound,
+        409 => GraphError.Conflict,
+        429 => GraphError.Throttled,
+        500...599 => GraphError.ServerError,
+        else => GraphError.BadRequest,
+    };
+}
+
+/// Make an authenticated POST request that returns 204 No Content.
+///
+/// The Graph softDelete endpoints (chat/channel messages) return 204 with no
+/// body. Using the regular post() function leaves the response_writer waiting
+/// for data that never arrives on a keep-alive connection, which hangs and
+/// eventually crashes the MCP process. This variant sends keep_alive=false and
+/// omits the response_writer so it returns as soon as the status line arrives.
+///
+/// `json_body` is the POST body — pass "{}" for softDelete which expects an
+/// empty JSON object.
+pub fn postNoContent(allocator: Allocator, io: Io, access_token: []const u8, path: []const u8, json_body: []const u8) !void {
+    const url = try std.fmt.allocPrint(allocator, "{s}{s}", .{ base_url, path });
+    defer allocator.free(url);
+
+    std.debug.print("ms-mcp: POST (no-content) {s}\n", .{url});
+
+    const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{access_token});
+    defer allocator.free(auth_header);
+
+    var client: std.http.Client = .{ .allocator = allocator, .io = io };
+    defer client.deinit();
+
+    const fetched = client.fetch(.{
+        .location = .{ .url = url },
+        .method = .POST,
+        .payload = json_body,
+        .keep_alive = false,
+        .extra_headers = &[_]std.http.Header{
+            .{ .name = "Authorization", .value = auth_header },
+            .{ .name = "Content-Type", .value = "application/json" },
+        },
+    }) catch return GraphError.NetworkError;
+
+    const code: u16 = @intFromEnum(fetched.status);
+    if (code >= 200 and code < 300) return;
+    return switch (code) {
+        400 => GraphError.BadRequest,
+        401 => GraphError.Unauthorized,
+        403 => GraphError.Forbidden,
+        404 => GraphError.NotFound,
+        409 => GraphError.Conflict,
+        429 => GraphError.Throttled,
+        500...599 => GraphError.ServerError,
+        else => GraphError.BadRequest,
+    };
 }
 
 /// Internal: shared logic for all Graph API requests.
-/// Builds the URL, sets up auth headers, sends the request, checks for errors.
+/// Builds the URL, sets up auth headers, sends the request, inspects
+/// the response status. On 2xx returns the body; on 4xx/5xx returns the
+/// matching GraphError variant and frees the body.
 ///
 /// If `json_body` is non-null, sends it as a JSON POST/PATCH/etc.
 /// If null, sends a GET (or whatever `method` says) with no body.
@@ -247,7 +426,7 @@ fn request(
 
     // Dynamically growing buffer for the response body.
     var response_buf: std.Io.Writer.Allocating = .init(allocator);
-    defer response_buf.deinit();
+    errdefer response_buf.deinit();
 
     // Build the headers list.
     // Always include Authorization. Add Content-Type if we have a JSON body.
@@ -263,21 +442,21 @@ fn request(
     const has_body = if (json_body) |b| b.len > 0 else false;
 
     // fetch() sends the request and reads the response in one call.
-    // We don't check the status — we always return the body.
-    // _ discards the result since Zig requires all values to be used.
-    _ = try client.fetch(.{
+    // fetched.status carries the HTTP status — we use it to pick
+    // success vs typed error below.
+    const fetched = client.fetch(.{
         .location = .{ .url = url },
         .method = method,
         .payload = json_body,
         .extra_headers = if (has_body) headers_with_content_type else headers_auth_only,
         .response_writer = &response_buf.writer,
-    });
+    }) catch {
+        response_buf.deinit();
+        return GraphError.NetworkError;
+    };
 
-    // Always return the response body — even on errors.
-    // If Microsoft returns a 4xx/5xx, the body contains a JSON error
-    // message explaining what went wrong. The LLM can read it and
-    // tell the user, which is way more useful than a generic "failed".
-    return response_buf.toOwnedSlice();
+    const body = try response_buf.toOwnedSlice();
+    return mapStatus(allocator, fetched.status, body);
 }
 
 // --- Tests ---

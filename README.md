@@ -1,16 +1,47 @@
 # ms365-mcp
 
-A lightweight Microsoft 365 MCP server written in Zig. ~4.6k lines of code, ~5.7MB binary, no runtime dependencies.
+A Microsoft 365 MCP server that's small enough you forget it's running. 67 tools across Teams, Outlook, Calendar, SharePoint, and OneDrive. Built in Zig — no Node, no Python, no runtime dependencies. Statically linked.
 
-Exposes Microsoft Graph API functionality — Teams, Outlook, and Calendar — as MCP tools for use with LLM agents.
+**The numbers that matter** (measured, not estimated):
 
-## Install
+| Metric | Value |
+|---|---|
+| Cold-start RAM | **1.3 MB peak** / 1.9 MB resident |
+| Cold-start time | **~120 ms** |
+| Binary size | **5.9 MB** statically linked |
+| `list-emails` payload to the model | **4.2 KB** vs **31 KB** raw Graph (**~87% smaller**) |
+| Tokens per `list-emails` call | **~1,050** vs ~7,800 raw |
+| End-to-end test count, against live Graph | **94** (no mocks) |
+
+The context savings are the lever. On a 200K-token model, ms365-mcp lets the agent hold ~50 inbox snapshots in working memory instead of ~6. That's the difference between "the agent forgot what it was doing" and "the agent finishes the task."
+
+**Non-technical readers:** see [docs/sales-agent-capabilities.md](docs/sales-agent-capabilities.md) for a one-page tour of what the tool unlocks.
+
+## Install (stable)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/currenthandle/ms365-mcp/main/install.sh | sh
 ```
 
-This downloads the right binary for your platform (macOS/Linux, ARM64/x86_64) to `~/.local/bin/ms365-mcp`.
+Downloads the right binary for your platform (macOS/Linux, ARM64/x86_64) to `~/.local/bin/ms365-mcp`.
+
+## Install (staging)
+
+To try in-progress features from the `staging` branch:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/currenthandle/ms365-mcp/staging/install-staging.sh | sh
+```
+
+That installs the latest release candidate. To pin to a specific rc tag (useful for reproducing a tester's environment):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/currenthandle/ms365-mcp/staging/install-staging.sh | sh -s -- --tag v0.1.0-rc.3
+```
+
+Every push to `staging` is auto-tagged `vX.Y.Z-rc.N` by [`.github/workflows/tag-staging.yml`](.github/workflows/tag-staging.yml), which triggers the [`release.yml`](.github/workflows/release.yml) workflow to publish a pre-release. After installing, run `ms365-mcp --version` to confirm which build you're on.
+
+Staging is a moving target — may break, may include features that haven't shipped to `main` yet.
 
 ## Setup
 
@@ -36,28 +67,40 @@ This downloads the right binary for your platform (macOS/Linux, ARM64/x86_64) to
 
 ## Tools
 
-**Email** — list-emails, read-email, send-email, delete-email, create-draft, send-draft, update-draft, delete-draft, add-attachment, list-attachments, remove-attachment
+**Email** (15) — list-emails, read-email, send-email, reply-email, reply-all-email, forward-email, search-emails, list-mail-folders, mark-read-email, move-email, list-email-attachments, read-email-attachment, download-email-attachment, delete-email, batch-delete-emails
 
-**Calendar** — list-calendar-events, get-calendar-event, create-calendar-event, update-calendar-event, delete-calendar-event
+**Drafts** (7) — create-draft, send-draft, update-draft, delete-draft, add-attachment, list-attachments, remove-attachment
 
-**Teams Chat** — list-chats, list-chat-messages, send-chat-message, create-chat, delete-chat-message
+**Calendar** (8) — list-calendar-events, get-calendar-event, create-calendar-event, update-calendar-event, delete-calendar-event, find-meeting-times, get-schedule, respond-to-event
 
-**Teams Channels** — list-teams, list-channels, list-channel-messages, get-channel-message-replies, reply-to-channel-message, delete-channel-message, delete-channel-reply
+**Teams Chat** (7) — list-chats, search-chats, list-chat-messages, search-chat-messages, send-chat-message, create-chat, delete-chat-message
 
-**Users** — search-users, get-profile, get-mailbox-settings
+**Teams Channels** (9) — list-teams, list-channels, search-channels, list-channel-messages, get-channel-message-replies, post-channel-message, reply-to-channel-message, delete-channel-message, delete-channel-reply
 
-**Auth** — login, verify-login, sync-timezone
+**SharePoint** (9) — search-sharepoint-sites, list-sharepoint-drives, list-sharepoint-items, search-sharepoint-files, upload-sharepoint-file, upload-sharepoint-content, create-sharepoint-folder, delete-sharepoint-item, download-sharepoint-file
+
+**OneDrive** (6) — list-onedrive-items, search-onedrive-files, upload-onedrive-file, upload-onedrive-content, download-onedrive-file, delete-onedrive-item
+
+**Auth & utility** (6) — login, verify-login, get-mailbox-settings, sync-timezone, search-users, get-profile
 
 ## Build from source
 
-Requires [Zig](https://ziglang.org/) `0.16.0-dev.2736+3b515fbed` (nightly).
+Requires [Zig](https://ziglang.org/) `0.16.0`.
 
 ```sh
 zig build -Doptimize=ReleaseSafe
 ```
 
-Run tests:
+Run unit tests:
 
 ```sh
 zig build test
 ```
+
+Run the live-Graph end-to-end suite (85 tests; needs `MS365_CLIENT_ID` / `MS365_TENANT_ID` configured plus the `E2E_*` variables in `.env`):
+
+```sh
+zig build e2e
+```
+
+The e2e harness exercises every tool against real Graph endpoints — including 6 cross-tool user journeys (search a person → open a chat → send → search index → delete → verify gone).
