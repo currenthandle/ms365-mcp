@@ -13,6 +13,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # build.zig stamps the version into the binary via `git describe
+          # --tags`. The default checkout is shallow with no tag refs, which
+          # makes describe fall back to a hardcoded constant — so the
+          # binary's reported version drifts away from the GitHub tag.
+          # Fetch full history + tags so the stamp matches the release tag.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Install Zig 0.16.0
         uses: mlugg/setup-zig@v2
@@ -43,6 +51,23 @@ jobs:
           zig build -Dtarget=x86_64-linux -Doptimize=ReleaseSafe
           mv zig-out/bin/ms365-mcp ms365-mcp-linux-x86_64
           rm -rf zig-out
+
+      - name: Verify binary version matches tag
+        # Run the just-built linux-x86_64 binary (the runner is x86_64-linux,
+        # so this is the only target we can exec without an emulator) and
+        # check that --version reports exactly the release tag. If they
+        # disagree, fail the release rather than ship a mismatched binary.
+        run: |
+          set -e
+          chmod +x ms365-mcp-linux-x86_64
+          stamped="$(./ms365-mcp-linux-x86_64 --version | tr -d '[:space:]')"
+          expected="${GITHUB_REF_NAME}"
+          echo "Stamped:  ${stamped}"
+          echo "Expected: ${expected}"
+          if [ "${stamped}" != "${expected}" ]; then
+            echo "::error::Binary version (${stamped}) does not match release tag (${expected})."
+            exit 1
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

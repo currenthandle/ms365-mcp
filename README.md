@@ -17,31 +17,13 @@ The context savings are the lever. On a 200K-token model, ms365-mcp lets the age
 
 **Non-technical readers:** see [docs/sales-agent-capabilities.md](docs/sales-agent-capabilities.md) for a one-page tour of what the tool unlocks.
 
-## Install (stable)
+## Install
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/currenthandle/ms365-mcp/main/install.sh | sh
 ```
 
 Downloads the right binary for your platform (macOS/Linux, ARM64/x86_64) to `~/.local/bin/ms365-mcp`.
-
-## Install (staging)
-
-To try in-progress features from the `staging` branch:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/currenthandle/ms365-mcp/staging/install-staging.sh | sh
-```
-
-That installs the latest release candidate. To pin to a specific rc tag (useful for reproducing a tester's environment):
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/currenthandle/ms365-mcp/staging/install-staging.sh | sh -s -- --tag v0.1.0-rc.3
-```
-
-Every push to `staging` is auto-tagged `vX.Y.Z-rc.N` by [`.github/workflows/tag-staging.yml`](.github/workflows/tag-staging.yml), which triggers the [`release.yml`](.github/workflows/release.yml) workflow to publish a pre-release. After installing, run `ms365-mcp --version` to confirm which build you're on.
-
-Staging is a moving target — may break, may include features that haven't shipped to `main` yet.
 
 ## Setup
 
