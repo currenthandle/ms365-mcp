@@ -1,0 +1,64 @@
+name: Check VERSION bump
+
+# Guardrail for PRs targeting main: fail if the PR doesn't bump VERSION.
+# Forgetting to bump means tag-main.yml will see an existing tag and
+# silently skip the release, so install.sh keeps serving the old binary.
+# This check makes that mistake loud at PR time instead.
+#
+# Escape hatch: attach the "skip-release" label to PRs that legitimately
+# don't warrant a new release (doc tweaks, CI-only changes, etc.).
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip if labeled "skip-release"
+        id: skip
+        env:
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -e
+          # The label list arrives as a JSON array of strings. Match the
+          # exact name "skip-release" — anything else falls through to
+          # the actual bump check.
+          if echo "${LABELS}" | grep -q '"skip-release"'; then
+            echo "PR has skip-release label — bypassing VERSION check."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.skip.outputs.skip != 'true'
+        with:
+          # Need both PR head and base to diff VERSION. fetch-depth: 0
+          # gets the full history; checkout@v4 puts us on the merge
+          # commit by default, which has both parents available.
+          fetch-depth: 0
+
+      - name: Diff VERSION between base and head
+        if: steps.skip.outputs.skip != 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -e
+          base_version="$(git show "${BASE_SHA}:VERSION" 2>/dev/null | tr -d '[:space:]' || echo "")"
+          head_version="$(git show "${HEAD_SHA}:VERSION" 2>/dev/null | tr -d '[:space:]' || echo "")"
+          echo "Base VERSION: ${base_version}"
+          echo "Head VERSION: ${head_version}"
+          if [ "${base_version}" = "${head_version}" ]; then
+            echo "::error::VERSION was not bumped (still ${head_version}). Bump VERSION in this PR, or attach the 'skip-release' label if no release is intended."
+            exit 1
+          fi
+          echo "VERSION bumped: ${base_version} -> ${head_version}"

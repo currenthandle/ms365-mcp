@@ -1,0 +1,65 @@
+name: Release main
+
+# On every push to main: read VERSION, tag if the tag doesn't already
+# exist, then build + publish a stable release. Bumping the release
+# means bumping VERSION in a commit and merging to main. Merges that
+# don't touch VERSION are no-ops (the tag already exists, so the job
+# skips the build entirely).
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.target.outputs.tag }}
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve target tag
+        id: target
+        run: |
+          set -e
+          tag="$(cat VERSION | tr -d '[:space:]')"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Target tag: ${tag}"
+
+      - name: Skip if tag already exists
+        id: check
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          set -e
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Tag ${TAG} already exists — bump VERSION to cut a new release."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push tag
+        if: steps.check.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "${TAG} — auto-tagged main build"
+          git push origin "${TAG}"
+
+  release:
+    needs: tag
+    if: needs.tag.outputs.skip != 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}

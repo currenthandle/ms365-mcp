@@ -1,9 +1,22 @@
 name: Release
 
+# Reusable build-and-publish job. Called by release-main.yml and
+# release-staging.yml after they compute the tag. This keeps the
+# Zig build + verify + publish steps in one place.
+#
+# Not triggered by tag pushes — the old design relied on bot-pushed
+# tags firing this workflow, but GitHub's GITHUB_TOKEN intentionally
+# does not trigger downstream workflows (to prevent infinite loops).
+# Instead each branch workflow calls this as a reusable workflow and
+# passes the tag as an input.
+
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_call:
+    inputs:
+      tag:
+        description: 'The tag to build and publish (e.g. v0.1.1, v0.1.1-rc.2)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -13,6 +26,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # build.zig stamps the version into the binary via `git describe
+          # --tags`. Fetch full history + tags so the stamp matches the
+          # release tag — the default shallow checkout makes git describe
+          # fall back to a hardcoded constant.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Install Zig 0.16.0
         uses: mlugg/setup-zig@v2
@@ -24,35 +44,42 @@ jobs:
 
       - name: Build all targets
         run: |
-          # macOS Apple Silicon (aarch64-macos)
           zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe
           mv zig-out/bin/ms365-mcp ms365-mcp-macos-arm64
           rm -rf zig-out
 
-          # macOS Intel (x86_64-macos)
           zig build -Dtarget=x86_64-macos -Doptimize=ReleaseSafe
           mv zig-out/bin/ms365-mcp ms365-mcp-macos-x86_64
           rm -rf zig-out
 
-          # Linux ARM64 (aarch64-linux)
           zig build -Dtarget=aarch64-linux -Doptimize=ReleaseSafe
           mv zig-out/bin/ms365-mcp ms365-mcp-linux-arm64
           rm -rf zig-out
 
-          # Linux x86_64 (x86_64-linux)
           zig build -Dtarget=x86_64-linux -Doptimize=ReleaseSafe
           mv zig-out/bin/ms365-mcp ms365-mcp-linux-x86_64
           rm -rf zig-out
 
+      - name: Verify binary version matches tag
+        env:
+          EXPECTED: ${{ inputs.tag }}
+        run: |
+          set -e
+          chmod +x ms365-mcp-linux-x86_64
+          stamped="$(./ms365-mcp-linux-x86_64 --version | tr -d '[:space:]')"
+          echo "Stamped:  ${stamped}"
+          echo "Expected: ${EXPECTED}"
+          if [ "${stamped}" != "${EXPECTED}" ]; then
+            echo "::error::Binary version (${stamped}) does not match release tag (${EXPECTED})."
+            exit 1
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag }}
           generate_release_notes: true
-          # Hyphenated tags (e.g. v0.2.0-rc.1) are pre-releases by convention.
-          # GitHub's /releases/latest endpoint excludes pre-releases, which
-          # means install.sh keeps pulling the last stable tag and doesn't
-          # ship release candidates to non-tester users by accident.
-          prerelease: ${{ contains(github.ref, '-') }}
+          prerelease: ${{ contains(inputs.tag, '-') }}
           files: |
             ms365-mcp-macos-arm64
             ms365-mcp-macos-x86_64

@@ -1,10 +1,8 @@
-name: Tag staging
+name: Release staging
 
-# Auto-tag every push to the staging branch as the next release-candidate
-# of the version declared in VERSION. Pushing the tag triggers
-# release.yml, which builds the binaries and publishes a pre-release.
-# This is the only workflow that runs on a staging push — the build
-# itself comes from release.yml so we never build the same commit twice.
+# On every push to staging: compute the next rc tag (vX.Y.Z-rc.N),
+# create it, then build + publish a pre-release. The rc number
+# auto-increments based on existing tags for the current VERSION base.
 
 on:
   push:
@@ -17,10 +15,11 @@ permissions:
 jobs:
   tag:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.nexttag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # Need the full tag history to find the highest existing rc.
           fetch-depth: 0
 
       - name: Compute next rc tag
@@ -28,8 +27,6 @@ jobs:
         run: |
           set -e
           base="$(cat VERSION | tr -d '[:space:]')"
-          # Find the highest existing rc number for this base, e.g. for
-          # base=v0.1.0 look at v0.1.0-rc.1, v0.1.0-rc.2, ... and bump.
           highest=$(git tag --list "${base}-rc.*" \
             | sed -E "s/^${base}-rc\.//" \
             | grep -E '^[0-9]+$' \
@@ -53,3 +50,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "${TAG}" -m "${TAG} — auto-tagged staging build"
           git push origin "${TAG}"
+
+  release:
+    needs: tag
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
