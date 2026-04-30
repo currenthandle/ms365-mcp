@@ -1,12 +1,10 @@
-name: Tag main
+name: Release main
 
-# Auto-tag every push to main as the stable release of the version
-# declared in VERSION. Pushing the tag triggers release.yml, which
-# builds the binaries and publishes a stable release (no -rc suffix,
-# so GitHub's /releases/latest endpoint surfaces it to install.sh).
-#
-# Skips if the tag already exists — bumping the release means bumping
-# VERSION in a commit, then merging that to main.
+# On every push to main: read VERSION, tag if the tag doesn't already
+# exist, then build + publish a stable release. Bumping the release
+# means bumping VERSION in a commit and merging to main. Merges that
+# don't touch VERSION are no-ops (the tag already exists, so the job
+# skips the build entirely).
 
 on:
   push:
@@ -19,10 +17,12 @@ permissions:
 jobs:
   tag:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.target.outputs.tag }}
+      skip: ${{ steps.check.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # Need full tag history so we can check whether the tag exists.
           fetch-depth: 0
 
       - name: Resolve target tag
@@ -56,3 +56,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "${TAG}" -m "${TAG} — auto-tagged main build"
           git push origin "${TAG}"
+
+  release:
+    needs: tag
+    if: needs.tag.outputs.skip != 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
