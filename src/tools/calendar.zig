@@ -536,16 +536,23 @@ pub fn handleRespondToEvent(ctx: ToolContext) void {
         return;
     }
 
-    const comment = json_rpc.getStringArg(args, "comment") orelse "";
+    const comment = json_rpc.getStringArg(args, "comment");
     const send_response: bool = if (args.get("sendResponse")) |v| switch (v) {
         .bool => |b| b,
         else => true,
     } else true;
 
     // Build body with std.json.Stringify — never raw-format the comment.
+    // Microsoft Graph requires sendResponse=true when comment is present,
+    // so we omit comment entirely when it's empty/absent to allow
+    // sendResponse=false (silent responses).
     var body: ObjectMap = .empty;
     defer body.deinit(ctx.allocator);
-    body.put(ctx.allocator, "comment", .{ .string = comment }) catch return;
+    if (comment) |c| {
+        if (c.len > 0) {
+            body.put(ctx.allocator, "comment", .{ .string = c }) catch return;
+        }
+    }
     body.put(ctx.allocator, "sendResponse", .{ .bool = send_response }) catch return;
 
     var json_buf: std.Io.Writer.Allocating = .init(ctx.allocator);
