@@ -469,7 +469,11 @@ pub fn handleSearchEmails(ctx: ToolContext) void {
         } else {
             pw.writeAll("/me/messages?") catch return;
         }
-        pw.print("$search=%22{s}%22&$top={s}&$skip={s}&$select=id,subject,from,receivedDateTime,bodyPreview,webLink", .{ encoded, size, from }) catch return;
+        // Note: Microsoft Graph does not support $skip with $search — it
+        // returns 400. Pagination must use @odata.nextLink (pageToken).
+        // $orderby is also unsupported with $search; Graph returns results
+        // ranked by relevance instead.
+        pw.print("$search=%22{s}%22&$top={s}&$select=id,subject,from,receivedDateTime,bodyPreview,webLink", .{ encoded, size }) catch return;
 
         // $filter is appended only if a date filter is present. Note: Graph
         // requires $filter clauses with ge/le on receivedDateTime to be in
