@@ -280,7 +280,7 @@ pub fn testRespondToEvent(client: *McpClient) !void {
     var args_buf: [1024]u8 = undefined;
     const args = std.fmt.bufPrint(
         &args_buf,
-        "{{\"eventId\":\"{s}\",\"action\":\"tentativelyAccept\",\"comment\":\"E2E test\",\"sendResponse\":false}}",
+        "{{\"eventId\":\"{s}\",\"action\":\"tentativelyAccept\",\"comment\":\"E2E test\",\"sendResponse\":true}}",
         .{event_id},
     ) catch return;
     const resp = try client.callTool("respond-to-event", args);
